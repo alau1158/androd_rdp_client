@@ -2884,6 +2884,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "ironrdp-dexrdp-client"
+version = "0.1.0"
+dependencies = [
+ "ironrdp-async",
+ "ironrdp-connector",
+ "ironrdp-core 0.2.1",
+ "ironrdp-dvc",
+ "ironrdp-graphics",
+ "ironrdp-input",
+ "ironrdp-pdu",
+ "ironrdp-rdpemt",
+ "ironrdp-rdpeudp",
+ "ironrdp-rdpeudp-tokio",
+ "ironrdp-session",
+ "ironrdp-tls",
+ "ironrdp-tokio",
+ "jni 0.21.1",
+ "sspi",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
 name = "ironrdp-dexrdp-udp"
 version = "0.1.0"
 dependencies = [
