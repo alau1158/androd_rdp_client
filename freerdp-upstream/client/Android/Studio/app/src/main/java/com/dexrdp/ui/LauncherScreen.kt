@@ -68,6 +68,7 @@ fun LauncherScreen(
     onUpdate: (ConnectionProfile) -> Unit,
     onDelete: (String) -> Unit,
     onConnect: (ConnectionProfile) -> Unit,
+    onConnectEngine: (ConnectionProfile) -> Unit,
     onOpenKeyboardSettings: () -> Unit
 ) {
     val selected = profiles.firstOrNull { it.id == selectedId }
@@ -112,6 +113,7 @@ fun LauncherScreen(
                         onUpdate = onUpdate,
                         onDelete = { onDelete(selected.id) },
                         onConnect = { onConnect(selected) },
+                        onConnectEngine = onConnectEngine,
                         modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                 }
@@ -322,6 +324,7 @@ private fun ProfileEditor(
     onUpdate: (ConnectionProfile) -> Unit,
     onDelete: () -> Unit,
     onConnect: () -> Unit,
+    onConnectEngine: (ConnectionProfile) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val canConnect = profile.host.isNotBlank()
@@ -435,6 +438,15 @@ private fun ProfileEditor(
             OutlinedButton(onClick = onDelete, modifier = Modifier.height(48.dp)) {
                 Text("Delete")
             }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        OutlinedButton(
+            onClick = { onConnectEngine(profile) },
+            enabled = canConnect,
+            modifier = Modifier.height(48.dp)
+        ) {
+            Text("Connect (UDP engine)")
         }
 
         Spacer(modifier = Modifier.height(20.dp))

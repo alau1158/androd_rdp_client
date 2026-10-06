@@ -1,13 +1,275 @@
-//! Placeholder to validate that the IronRDP client session stack cross-compiles
-//! for Android, including CredSSP (sspi) and the RDP-UDP transport.
-use ironrdp_connector::ClientConnector;
-use ironrdp_rdpeudp_tokio::MultitransportBootstrap;
-use ironrdp_session::ActiveStage;
+//! Android RDP engine built on IronRDP's reusable client library.
+//!
+//! `RdpClient` already implements the whole connection sequence (TCP, TLS,
+//! NLA/CredSSP) plus the RDP-UDP sideband (soft-sync + DVC tunnelling), so this
+//! crate is the JNI boundary only: it drives the session and marshals frames and
+//! input between IronRDP and Kotlin.
+//!
+//! Threading: the session and the output pump each own a dedicated thread with a
+//! current-thread Tokio runtime. `RdpClient::run()` is awaited with `block_on`
+//! rather than spawned, which avoids a higher-ranked `Send` limitation, and the
+//! JNI environment is attached once per thread.
+
+use ironrdp_client::config::{ConfigBuilder, Destination};
+use ironrdp_client::output_channel::output_channel;
+use ironrdp_client::rdp::{RdpClient, RdpInputEvent, RdpInputSender, RdpOutputEvent};
+use ironrdp_pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags};
+use ironrdp_pdu::input::mouse::{MousePdu, PointerFlags};
+use ironrdp_tls::CertificateValidation;
+use jni::objects::{GlobalRef, JByteBuffer, JClass, JObject, JString, JValue};
+use jni::sys::{jboolean, jint, jlong};
+use jni::JNIEnv;
+use smallvec::smallvec;
+
+struct Session {
+    input: RdpInputSender,
+}
+
+fn jstring_to_string(env: &mut JNIEnv, s: &JString) -> String {
+    env.get_string(s)
+        .map(|v| v.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+fn report_failure(env: &mut JNIEnv, callback: &JObject, message: &str) {
+    if let Ok(msg) = env.new_string(message) {
+        let _ = env.call_method(
+            callback,
+            "onFailure",
+            "(Ljava/lang/String;)V",
+            &[JValue::Object(&msg)],
+        );
+    }
+}
+
+/// Start a session. `frame_buffer` is a direct ByteBuffer owned by Kotlin, sized
+/// for `width * height` ARGB pixels; the engine writes frames into it.
+/// Returns an opaque handle, or 0 on failure (after reporting via `callback`).
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeConnect(
+    mut env: JNIEnv,
+    _cls: JClass,
+    host: JString,
+    port: jint,
+    username: JString,
+    password: JString,
+    domain: JString,
+    width: jint,
+    height: jint,
+    frame_buffer: JByteBuffer,
+    callback: JObject,
+) -> jlong {
+    let host = jstring_to_string(&mut env, &host);
+    let username = jstring_to_string(&mut env, &username);
+    let password = jstring_to_string(&mut env, &password);
+    let domain = jstring_to_string(&mut env, &domain);
+
+    let callback_ref: GlobalRef = match env.new_global_ref(&callback) {
+        Ok(r) => r,
+        Err(_) => return 0,
+    };
+
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<jlong, String> {
+        let destination = Destination::new(format!("{host}:{port}"))
+            .map_err(|e| format!("bad destination: {e}"))?;
+
+        let mut builder = ConfigBuilder::new()
+            .with_destination(destination)
+            .with_username(username)
+            .with_password(password)
+            .with_desktop_width(width as u16)
+            .with_desktop_height(height as u16)
+            .with_tls(true)
+            .with_credssp(true)
+            .with_udp_transport(true)
+            .with_certificate_validation(CertificateValidation::DangerouslyAcceptInvalidCertificate);
+
+        if !domain.is_empty() {
+            builder = builder.with_domain(domain);
+        }
+
+        let config = builder.build().map_err(|e| format!("config: {e}"))?;
+
+        let frame_buffer = env
+            .new_global_ref(frame_buffer)
+            .map_err(|e| format!("frame buffer ref: {e}"))?;
+        let vm = env.get_java_vm().map_err(|e| format!("java vm: {e}"))?;
+
+        let (output_sender, mut output_receiver) = output_channel(64);
+        let client = RdpClient::new(config, output_sender);
+        let input = client.input_sender();
+
+        // Session thread: connect + run (includes the UDP sideband).
+        std::thread::spawn(move || {
+            match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt.block_on(client.run()),
+                Err(_) => {}
+            }
+        });
+
+        // Output pump thread: forwards frames and lifecycle events to Kotlin.
+        let vm_for_frames = vm;
+        let callback_for_thread = callback_ref.clone();
+        std::thread::spawn(move || {
+            let mut env = match vm_for_frames.attach_current_thread_permanently() {
+                Ok(env) => env,
+                Err(_) => return,
+            };
+            let pump = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(_) => return,
+            };
+
+            while let Some(event) = pump.block_on(output_receiver.recv()) {
+                match event {
+                    RdpOutputEvent::Connected => {
+                        let _ = env.call_method(callback_for_thread.as_obj(), "onConnected", "()V", &[]);
+                    }
+                    RdpOutputEvent::Image {
+                        buffer,
+                        width,
+                        height,
+                    } => {
+                        let _ = write_frame(&mut env, &frame_buffer, &buffer, width.get(), height.get());
+                        let _ = env.call_method(
+                            callback_for_thread.as_obj(),
+                            "onFrame",
+                            "(Ljava/nio/ByteBuffer;II)V",
+                            &[
+                                JValue::Object(frame_buffer.as_obj()),
+                                JValue::Int(width.get() as i32),
+                                JValue::Int(height.get() as i32),
+                            ],
+                        );
+                    }
+                    RdpOutputEvent::ConnectionFailure(err) => {
+                        report_failure(&mut env, callback_for_thread.as_obj(), &format!("{err}"));
+                    }
+                    RdpOutputEvent::Terminated(_) => {
+                        let _ = env.call_method(callback_for_thread.as_obj(), "onTerminated", "()V", &[]);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        Ok(Box::into_raw(Box::new(Session { input })) as jlong)
+    }));
+
+    match outcome {
+        Ok(Ok(handle)) => handle,
+        Ok(Err(message)) => {
+            report_failure(&mut env, callback_ref.as_obj(), &message);
+            0
+        }
+        Err(_) => {
+            report_failure(&mut env, callback_ref.as_obj(), "panic in nativeConnect");
+            0
+        }
+    }
+}
+
+fn write_frame(
+    env: &mut JNIEnv,
+    frame_buffer: &GlobalRef,
+    pixels: &[u32],
+    width: u16,
+    height: u16,
+) -> Result<(), ()> {
+    let buf = unsafe { JByteBuffer::from_raw(frame_buffer.as_raw()) };
+    let capacity = env.get_direct_buffer_capacity(&buf).map_err(|_| ())?;
+    let addr = unsafe { env.get_direct_buffer_address(&buf) }.map_err(|_| ())?;
+    if addr.is_null() {
+        return Err(());
+    }
+
+    let expected = (width as usize).saturating_mul(height as usize);
+    let count = pixels.len().min(expected).min(capacity / 4);
+    let dst = unsafe { std::slice::from_raw_parts_mut(addr as *mut u32, count) };
+    for (i, px) in pixels.iter().take(count).enumerate() {
+        // Source is 0x00RRGGBB; force opaque alpha for Android ARGB_8888.
+        dst[i] = px | 0xFF00_0000;
+    }
+    Ok(())
+}
 
 #[unsafe(no_mangle)]
-pub extern "C" fn dexrdp_client_probe() -> i32 {
-    let _ = core::mem::size_of::<ClientConnector>();
-    let _ = core::mem::size_of::<ActiveStage>();
-    let _ = core::mem::size_of::<MultitransportBootstrap>();
-    1
+pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeSendKey(
+    _env: JNIEnv,
+    _cls: JClass,
+    handle: jlong,
+    scancode: jint,
+    down: jboolean,
+) {
+    if handle == 0 {
+        return;
+    }
+    let session = unsafe { &*(handle as *const Session) };
+    let flags = if down != 0 {
+        KeyboardFlags::empty()
+    } else {
+        KeyboardFlags::RELEASE
+    };
+    let event = FastPathInputEvent::KeyboardEvent(flags, scancode as u8);
+    let _ = session
+        .input
+        .try_send(RdpInputEvent::FastPath(smallvec![event]));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeSendMouse(
+    _env: JNIEnv,
+    _cls: JClass,
+    handle: jlong,
+    x: jint,
+    y: jint,
+    flags: jint,
+) {
+    if handle == 0 {
+        return;
+    }
+    let session = unsafe { &*(handle as *const Session) };
+    let pdu = MousePdu {
+        flags: PointerFlags::from_bits_truncate(flags as u16),
+        number_of_wheel_rotation_units: 0,
+        x_position: x as u16,
+        y_position: y as u16,
+    };
+    let event = FastPathInputEvent::MouseEvent(pdu);
+    let _ = session
+        .input
+        .try_send(RdpInputEvent::FastPath(smallvec![event]));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeDisconnect(
+    _env: JNIEnv,
+    _cls: JClass,
+    handle: jlong,
+) {
+    if handle == 0 {
+        return;
+    }
+    let session = unsafe { &*(handle as *const Session) };
+    session.input.request_close();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeFree(
+    _env: JNIEnv,
+    _cls: JClass,
+    handle: jlong,
+) {
+    if handle == 0 {
+        return;
+    }
+    let session = unsafe { Box::from_raw(handle as *mut Session) };
+    drop(session);
 }

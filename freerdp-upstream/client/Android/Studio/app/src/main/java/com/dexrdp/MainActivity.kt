@@ -75,6 +75,7 @@ class MainActivity : ComponentActivity() {
                         selectedId = profiles.firstOrNull { it.id != id }?.id
                     },
                     onConnect = { profile -> connectWithKeyboardCheck(profile) },
+                    onConnectEngine = { profile -> launchEngine(profile) },
                     onOpenKeyboardSettings = {
                         SessionLauncher.openKeyboardPassthroughSettings(this)
                     }
@@ -92,6 +93,21 @@ class MainActivity : ComponentActivity() {
         lastTarget = Diagnostics.getLastTarget(this)
         udpOffer = SessionDiagnostics.findMultitransportOffer(this)
         udpEngine = com.freerdp.freerdpcore.services.LibFreeRDP.getUdpEngineVersion()
+    }
+
+    private fun launchEngine(profile: ConnectionProfile) {
+        val (displayW, displayH) = SessionLauncher.displaySize(this)
+        val (w, h) = profile.resolution.sizeOr(displayW, displayH)
+        val intent = android.content.Intent(this, com.dexrdp.engine.RdpSessionActivity::class.java).apply {
+            putExtra("host", profile.host)
+            putExtra("port", profile.port)
+            putExtra("user", profile.username)
+            putExtra("pass", profile.password)
+            putExtra("domain", profile.domain)
+            putExtra("width", w)
+            putExtra("height", h)
+        }
+        startActivity(intent)
     }
 
     private fun connectWithKeyboardCheck(profile: ConnectionProfile) {

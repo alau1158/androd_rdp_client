@@ -19,7 +19,7 @@ test = false
 default = []
 
 rustls = [
-    "ironrdp-tls/rustls",
+    "ironrdp-tls/rustls-ring",
     "tokio-tungstenite/rustls-tls-native-roots",
     "ironrdp-mstsgu?/rustls",
 ]
@@ -52,7 +52,7 @@ location = ["dep:ironrdp-rdpel"]
 udp = [
     "dep:ironrdp-rdpeudp",
     "dep:ironrdp-rdpeudp-tokio",
-    "ironrdp-rdpeudp-tokio/rustls-aws-lc-rs",
+    "ironrdp-rdpeudp-tokio/rustls-ring",
 ]
 
 all = [

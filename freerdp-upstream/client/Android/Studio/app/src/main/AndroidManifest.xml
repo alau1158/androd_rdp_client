@@ -50,6 +50,13 @@
         <!-- The library declares this accessibility service as exported="false",
              which stops Android listing it under Settings > Accessibility. The
              system must be able to bind to it, so force it exported. -->
+        <activity
+            android:name=".engine.RdpSessionActivity"
+            android:exported="false"
+            android:theme="@style/Theme.DexRdp"
+            android:configChanges="orientation|keyboard|keyboardHidden|screenSize|smallestScreenSize|density|screenLayout|navigation"
+            android:windowSoftInputMode="adjustResize" />
+
         <service
             android:name="com.freerdp.freerdpcore.presentation.KeyboardAccessibilityService"
             android:label="DeX RDP Physical Keyboard"
