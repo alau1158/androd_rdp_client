@@ -42,7 +42,8 @@ object NativeRdp {
     external fun nativeSetLogPath(path: String)
 
     external fun nativeSendKey(handle: Long, scancode: Int, down: Boolean, extended: Boolean)
-    external fun nativeSendMouse(handle: Long, x: Int, y: Int, flags: Int)
+    external fun nativeSendMouse(handle: Long, x: Int, y: Int, flags: Int, wheelUnits: Int)
+    external fun nativeSendMouseEx(handle: Long, x: Int, y: Int, xflags: Int)
     external fun nativeDisconnect(handle: Long)
     external fun nativeFree(handle: Long)
 }

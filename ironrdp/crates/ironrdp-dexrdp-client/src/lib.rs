@@ -15,6 +15,7 @@ use ironrdp_client::output_channel::output_channel;
 use ironrdp_client::rdp::{RdpClient, RdpInputEvent, RdpInputSender, RdpOutputEvent};
 use ironrdp_pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags};
 use ironrdp_pdu::input::mouse::{MousePdu, PointerFlags};
+use ironrdp_pdu::input::mouse_x::{MouseXPdu, PointerXFlags};
 use ironrdp_pdu::rdp::capability_sets::MajorPlatformType;
 use ironrdp_tls::CertificateValidation;
 use jni::objects::{GlobalRef, JByteBuffer, JClass, JObject, JString, JValue};
@@ -314,6 +315,7 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeSendMouse(
     x: jint,
     y: jint,
     flags: jint,
+    wheel_units: jint,
 ) {
     if handle == 0 {
         return;
@@ -321,11 +323,36 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeSendMouse(
     let session = unsafe { &*(handle as *const Session) };
     let pdu = MousePdu {
         flags: PointerFlags::from_bits_truncate(flags as u16),
-        number_of_wheel_rotation_units: 0,
+        number_of_wheel_rotation_units: wheel_units as i16,
         x_position: x as u16,
         y_position: y as u16,
     };
     let event = FastPathInputEvent::MouseEvent(pdu);
+    let _ = session
+        .input
+        .try_send(RdpInputEvent::FastPath(smallvec![event]));
+}
+
+/// Extended mouse event, carrying the X1/X2 side buttons (back/forward).
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeSendMouseEx(
+    _env: JNIEnv,
+    _cls: JClass,
+    handle: jlong,
+    x: jint,
+    y: jint,
+    xflags: jint,
+) {
+    if handle == 0 {
+        return;
+    }
+    let session = unsafe { &*(handle as *const Session) };
+    let pdu = MouseXPdu {
+        flags: PointerXFlags::from_bits_truncate(xflags as u16),
+        x_position: x as u16,
+        y_position: y as u16,
+    };
+    let event = FastPathInputEvent::MouseEventEx(pdu);
     let _ = session
         .input
         .try_send(RdpInputEvent::FastPath(smallvec![event]));

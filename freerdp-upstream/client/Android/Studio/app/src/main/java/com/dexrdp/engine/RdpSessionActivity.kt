@@ -3,6 +3,7 @@ package com.dexrdp.engine
 import android.app.Activity
 import android.os.Build
 import android.os.Bundle
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -27,6 +28,9 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback, PhysicalKeyboardRoute
 
     private var desktopWidth = 1920
     private var desktopHeight = 1080
+
+    private var lastX = 0
+    private var lastY = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val logFile = File(File(filesDir, "logs").apply { mkdirs() }, "freerdp.log")
@@ -122,6 +126,7 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback, PhysicalKeyboardRoute
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (handle == 0L) return super.onKeyDown(keyCode, event)
+        if (sendXButton(keyCode, true)) return true
         val scan = KeyMap.scancode(keyCode)
         if (scan >= 0) {
             NativeRdp.nativeSendKey(handle, scan, true, KeyMap.isExtended(keyCode))
@@ -132,6 +137,7 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback, PhysicalKeyboardRoute
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
         if (handle == 0L) return super.onKeyUp(keyCode, event)
+        if (sendXButton(keyCode, false)) return true
         val scan = KeyMap.scancode(keyCode)
         if (scan >= 0) {
             NativeRdp.nativeSendKey(handle, scan, false, KeyMap.isExtended(keyCode))
@@ -159,28 +165,120 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback, PhysicalKeyboardRoute
      */
     override fun handleKeyEvent(event: KeyEvent): Boolean {
         if (handle == 0L) return false
+        val down = event.action == KeyEvent.ACTION_DOWN
+        if (sendXButton(event.keyCode, down)) return true
         val scan = KeyMap.scancode(event.keyCode)
         if (scan < 0) return false
-        val down = event.action == KeyEvent.ACTION_DOWN
         NativeRdp.nativeSendKey(handle, scan, down, KeyMap.isExtended(event.keyCode))
         return true
     }
 
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        val x = event.x.toInt()
-        val y = event.y.toInt()
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> sendMouse(x, y, 0x1000 or 0x8000)
-            MotionEvent.ACTION_UP -> sendMouse(x, y, 0x1000)
-            MotionEvent.ACTION_MOVE -> sendMouse(x, y, 0x0800)
+    /**
+     * Sends the mouse side buttons as the RDP X1/X2 buttons. Android surfaces
+     * them either as a key event (KEYCODE_BACK / KEYCODE_FORWARD, usually from a
+     * mouse) or as MotionEvent BUTTON_BACK/BUTTON_FORWARD; both are routed here.
+     * Returns false for keys that are not side buttons.
+     */
+    private fun sendXButton(keyCode: Int, down: Boolean): Boolean {
+        val xflag = when (keyCode) {
+            KeyEvent.KEYCODE_BACK -> MouseFlags.X_BUTTON1
+            KeyEvent.KEYCODE_FORWARD -> MouseFlags.X_BUTTON2
             else -> return false
+        }
+        if (handle == 0L) return false
+        sendMouseEx(lastX, lastY, xflag or if (down) MouseFlags.X_DOWN else 0)
+        return true
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (handle == 0L) return super.onTouchEvent(event)
+        val (x, y) = toDesktop(event.x, event.y)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> sendMouse(x, y, MouseFlags.LEFT_BUTTON or MouseFlags.DOWN)
+            MotionEvent.ACTION_UP -> sendMouse(x, y, MouseFlags.LEFT_BUTTON)
+            MotionEvent.ACTION_MOVE ->
+                sendMouse(x, y, MouseFlags.MOVE or buttonFlags(event.buttonState))
+            else -> return super.onTouchEvent(event)
         }
         return true
     }
 
-    private fun sendMouse(x: Int, y: Int, flags: Int) {
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (handle == 0L) return super.onGenericMotionEvent(event)
+        val (x, y) = toDesktop(event.x, event.y)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_BUTTON_PRESS, MotionEvent.ACTION_BUTTON_RELEASE -> {
+                val down = event.actionMasked == MotionEvent.ACTION_BUTTON_PRESS
+                when (event.actionButton) {
+                    MotionEvent.BUTTON_BACK ->
+                        sendMouseEx(x, y, MouseFlags.X_BUTTON1 or if (down) MouseFlags.X_DOWN else 0)
+                    MotionEvent.BUTTON_FORWARD ->
+                        sendMouseEx(x, y, MouseFlags.X_BUTTON2 or if (down) MouseFlags.X_DOWN else 0)
+                    MotionEvent.BUTTON_SECONDARY ->
+                        sendMouse(x, y, MouseFlags.RIGHT_BUTTON or if (down) MouseFlags.DOWN else 0)
+                    MotionEvent.BUTTON_TERTIARY ->
+                        sendMouse(x, y, MouseFlags.MIDDLE_BUTTON or if (down) MouseFlags.DOWN else 0)
+                    else -> return super.onGenericMotionEvent(event)
+                }
+                return true
+            }
+            MotionEvent.ACTION_SCROLL -> {
+                val v = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+                val h = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
+                if (v != 0f) {
+                    sendMouse(
+                        x, y, MouseFlags.VERTICAL_WHEEL,
+                        if (v > 0) -MouseFlags.WHEEL_DELTA else MouseFlags.WHEEL_DELTA
+                    )
+                }
+                if (h != 0f) {
+                    sendMouse(
+                        x, y, MouseFlags.HORIZONTAL_WHEEL,
+                        if (h > 0) MouseFlags.WHEEL_DELTA else -MouseFlags.WHEEL_DELTA
+                    )
+                }
+                return true
+            }
+            MotionEvent.ACTION_HOVER_MOVE -> {
+                sendMouse(x, y, MouseFlags.MOVE)
+                return true
+            }
+            else -> return super.onGenericMotionEvent(event)
+        }
+    }
+
+    private fun buttonFlags(buttonState: Int): Int {
+        var flags = 0
+        if (buttonState and MotionEvent.BUTTON_PRIMARY != 0) flags = flags or MouseFlags.LEFT_BUTTON
+        if (buttonState and MotionEvent.BUTTON_SECONDARY != 0) flags = flags or MouseFlags.RIGHT_BUTTON
+        if (buttonState and MotionEvent.BUTTON_TERTIARY != 0) flags = flags or MouseFlags.MIDDLE_BUTTON
+        return flags
+    }
+
+    /** Maps view coordinates to desktop pixels (the view stretches to fill). */
+    private fun toDesktop(x: Float, y: Float): Pair<Int, Int> {
+        val view = remoteView
+        val vw = view?.width ?: 0
+        val vh = view?.height ?: 0
+        val dx = if (vw > 0) (x * desktopWidth / vw).toInt() else x.toInt()
+        val dy = if (vh > 0) (y * desktopHeight / vh).toInt() else y.toInt()
+        val cx = dx.coerceIn(0, (desktopWidth - 1).coerceAtLeast(0))
+        val cy = dy.coerceIn(0, (desktopHeight - 1).coerceAtLeast(0))
+        return cx to cy
+    }
+
+    private fun sendMouse(x: Int, y: Int, flags: Int, wheelUnits: Int = 0) {
         if (handle == 0L) return
-        NativeRdp.nativeSendMouse(handle, x, y, flags)
+        lastX = x
+        lastY = y
+        NativeRdp.nativeSendMouse(handle, x, y, flags, wheelUnits)
+    }
+
+    private fun sendMouseEx(x: Int, y: Int, xflags: Int) {
+        if (handle == 0L) return
+        lastX = x
+        lastY = y
+        NativeRdp.nativeSendMouseEx(handle, x, y, xflags)
     }
 
     override fun onDestroy() {

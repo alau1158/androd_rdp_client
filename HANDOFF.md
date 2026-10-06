@@ -107,12 +107,18 @@ breadcrumb / native backtrace pinpoints the failure. Then fix and rebuild.
 ## Engine JNI surface (com.dexrdp.engine.NativeRdp)
 
 `nativeConnect(host, port, user, pass, domain, w, h, frameBuffer, callback)`,
-`nativeSendKey(handle, scancode, down)`, `nativeSendMouse(handle, x, y, flags)`,
-`nativeDisconnect(handle)`, `nativeFree(handle)`, `nativeSetLogPath(path)`.
+`nativeSendKey(handle, scancode, down, extended)`,
+`nativeSendMouse(handle, x, y, flags, wheelUnits)`,
+`nativeSendMouseEx(handle, x, y, xflags)`, `nativeDisconnect(handle)`,
+`nativeFree(handle)`, `nativeSetLogPath(path)`.
 
 Callback: `onConnected`, `onFrame(buffer, w, h)`, `onFailure(reason)`,
-`onTerminated`. Frames are ARGB in a direct ByteBuffer owned by Kotlin.
+`onTerminated`. Frames are RGBA in a direct ByteBuffer owned by Kotlin
+(Android ARGB_8888 memory order).
 
-Known engine-path gaps: Super-key passthrough not yet wired (accessibility
-service currently feeds only the FreeRDP client); keyboard mapping is a subset;
-no clipboard/audio; mouse absolute positioning likely needs `MouseEventEx`.
+As of 1.0.23: keyboard passthrough (incl. Windows/Super key) and mouse input
+(left, right, middle, vertical/horizontal scroll, and back/forward side buttons
+X1/X2 via the extended mouse event) are wired. Known gaps: no clipboard/audio;
+keyboard mapping is a subset. RDP-UDP is still not negotiating — the engine
+silently falls back to TCP (`Reliable UDP bootstrap failed; continuing with
+TCP` in the log names the cause).
