@@ -20,10 +20,6 @@ public class KeyboardAccessibilityService extends AccessibilityService
 {
 	@Override public boolean onKeyEvent(KeyEvent event)
 	{
-		SessionActivity session = SessionActivity.activeSession;
-		if (session == null)
-			return super.onKeyEvent(event);
-
 		InputDevice device = event.getDevice();
 		if (device != null &&
 		    (device.getSources() & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD)
@@ -36,6 +32,15 @@ public class KeyboardAccessibilityService extends AccessibilityService
 			case KeyEvent.KEYCODE_POWER:
 				return super.onKeyEvent(event);
 		}
+
+		/* The IronRDP engine activity registers itself here while resumed. */
+		PhysicalKeyboardRouter.Target target = PhysicalKeyboardRouter.target;
+		if (target != null)
+			return target.handleKeyEvent(event);
+
+		SessionActivity session = SessionActivity.activeSession;
+		if (session == null)
+			return super.onKeyEvent(event);
 
 		/* Some tablets map the physical ESC key to KEYCODE_BACK (scancode 1).*/
 		if (event.getScanCode() == 1 && event.getKeyCode() != KeyEvent.KEYCODE_ESCAPE)

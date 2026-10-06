@@ -268,8 +268,13 @@ fn write_frame(
     let count = pixels.len().min(expected).min(capacity / 4);
     let dst = unsafe { std::slice::from_raw_parts_mut(addr as *mut u32, count) };
     for (i, px) in pixels.iter().take(count).enumerate() {
-        // Source is 0x00RRGGBB; force opaque alpha for Android ARGB_8888.
-        dst[i] = px | 0xFF00_0000;
+        // Source is 0x00RRGGBB. Android's ARGB_8888 bitmap stores pixels as
+        // RGBA in memory (little-endian), so emit [R, G, B, 0xFF], which is the
+        // u32 0xFF_BB_GG_RR: red and blue must be swapped relative to the source.
+        let r = (px >> 16) & 0xFF;
+        let g = (px >> 8) & 0xFF;
+        let b = px & 0xFF;
+        dst[i] = 0xFF00_0000 | (b << 16) | (g << 8) | r;
     }
     Ok(())
 }
@@ -281,16 +286,20 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeSendKey(
     handle: jlong,
     scancode: jint,
     down: jboolean,
+    extended: jboolean,
 ) {
     if handle == 0 {
         return;
     }
     let session = unsafe { &*(handle as *const Session) };
-    let flags = if down != 0 {
+    let mut flags = if down != 0 {
         KeyboardFlags::empty()
     } else {
         KeyboardFlags::RELEASE
     };
+    if extended != 0 {
+        flags |= KeyboardFlags::EXTENDED;
+    }
     let event = FastPathInputEvent::KeyboardEvent(flags, scancode as u8);
     let _ = session
         .input

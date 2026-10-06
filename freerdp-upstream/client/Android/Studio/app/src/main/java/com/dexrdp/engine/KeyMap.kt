@@ -93,4 +93,23 @@ object KeyMap {
         KeyEvent.KEYCODE_FORWARD_DEL -> 0x53
         else -> -1
     }
+
+    /** True for keys the RDP protocol sends with the extended (0xE0) prefix. */
+    fun isExtended(keyCode: Int): Boolean = when (keyCode) {
+        KeyEvent.KEYCODE_META_LEFT,
+        KeyEvent.KEYCODE_META_RIGHT,
+        KeyEvent.KEYCODE_ALT_RIGHT,
+        KeyEvent.KEYCODE_CTRL_RIGHT,
+        KeyEvent.KEYCODE_DPAD_UP,
+        KeyEvent.KEYCODE_DPAD_DOWN,
+        KeyEvent.KEYCODE_DPAD_LEFT,
+        KeyEvent.KEYCODE_DPAD_RIGHT,
+        KeyEvent.KEYCODE_MOVE_HOME,
+        KeyEvent.KEYCODE_MOVE_END,
+        KeyEvent.KEYCODE_PAGE_UP,
+        KeyEvent.KEYCODE_PAGE_DOWN,
+        KeyEvent.KEYCODE_INSERT,
+        KeyEvent.KEYCODE_FORWARD_DEL -> true
+        else -> false
+    }
 }

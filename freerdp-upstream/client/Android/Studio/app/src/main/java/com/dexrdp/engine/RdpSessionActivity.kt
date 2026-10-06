@@ -10,6 +10,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
+import com.freerdp.freerdpcore.presentation.PhysicalKeyboardRouter
 import java.io.File
 import java.nio.ByteBuffer
 
@@ -17,7 +18,7 @@ import java.nio.ByteBuffer
  * RDP session screen driven by the IronRDP engine, which negotiates the
  * RDP-UDP sideband for graphics when the server offers it.
  */
-class RdpSessionActivity : Activity(), NativeRdp.Callback {
+class RdpSessionActivity : Activity(), NativeRdp.Callback, PhysicalKeyboardRouter.Target {
 
     private var handle = 0L
     private var remoteView: RemoteView? = null
@@ -123,7 +124,7 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback {
         if (handle == 0L) return super.onKeyDown(keyCode, event)
         val scan = KeyMap.scancode(keyCode)
         if (scan >= 0) {
-            NativeRdp.nativeSendKey(handle, scan, true)
+            NativeRdp.nativeSendKey(handle, scan, true, KeyMap.isExtended(keyCode))
             return true
         }
         return super.onKeyDown(keyCode, event)
@@ -133,10 +134,36 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback {
         if (handle == 0L) return super.onKeyUp(keyCode, event)
         val scan = KeyMap.scancode(keyCode)
         if (scan >= 0) {
-            NativeRdp.nativeSendKey(handle, scan, false)
+            NativeRdp.nativeSendKey(handle, scan, false, KeyMap.isExtended(keyCode))
             return true
         }
         return super.onKeyUp(keyCode, event)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        PhysicalKeyboardRouter.target = this
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (PhysicalKeyboardRouter.target === this) {
+            PhysicalKeyboardRouter.target = null
+        }
+    }
+
+    /**
+     * Called from the accessibility service for hardware keys the system would
+     * otherwise consume (notably the Windows/Super key). Returns false so keys
+     * the engine cannot map still reach the system.
+     */
+    override fun handleKeyEvent(event: KeyEvent): Boolean {
+        if (handle == 0L) return false
+        val scan = KeyMap.scancode(event.keyCode)
+        if (scan < 0) return false
+        val down = event.action == KeyEvent.ACTION_DOWN
+        NativeRdp.nativeSendKey(handle, scan, down, KeyMap.isExtended(event.keyCode))
+        return true
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
