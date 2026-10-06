@@ -54,6 +54,7 @@
             android:name=".engine.RdpSessionActivity"
             android:exported="false"
             android:theme="@style/Theme.DexRdp"
+            android:enableOnBackInvokedCallback="false"
             android:configChanges="orientation|keyboard|keyboardHidden|screenSize|smallestScreenSize|density|screenLayout|navigation"
             android:windowSoftInputMode="adjustResize" />
 

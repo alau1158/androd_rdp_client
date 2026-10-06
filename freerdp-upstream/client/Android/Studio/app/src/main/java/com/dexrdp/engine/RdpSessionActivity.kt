@@ -151,6 +151,21 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback, PhysicalKeyboardRoute
         PhysicalKeyboardRouter.target = this
     }
 
+    /**
+     * Fallback for back delivered through the legacy back-press path rather than
+     * a key event. `onKeyDown` consumes the mouse back first, so this only runs
+     * when the key path did not handle it.
+     */
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (handle != 0L) {
+            sendXButton(KeyEvent.KEYCODE_BACK, true)
+            sendXButton(KeyEvent.KEYCODE_BACK, false)
+        } else {
+            super.onBackPressed()
+        }
+    }
+
     override fun onPause() {
         super.onPause()
         if (PhysicalKeyboardRouter.target === this) {
