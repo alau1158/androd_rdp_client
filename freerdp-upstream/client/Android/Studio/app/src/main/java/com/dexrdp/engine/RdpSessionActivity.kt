@@ -35,8 +35,6 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback {
         super.onCreate(savedInstanceState)
         crumb("super.onCreate done")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        hideSystemBars()
-        crumb("window setup done")
 
         val host = intent.getStringExtra("host").orEmpty()
         val port = intent.getIntExtra("port", 3389)
@@ -61,6 +59,9 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback {
         statusView = status
         root.addView(status, FrameLayout.LayoutParams(-2, -2))
         setContentView(root)
+        crumb("content view set")
+        hideSystemBars()
+        crumb("system bars hidden")
 
         crumb("before ensureLoaded")
         try {
@@ -166,7 +167,7 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback {
 
     private fun hideSystemBars() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.insetsController?.let {
+            window.decorView.windowInsetsController?.let {
                 it.hide(android.view.WindowInsets.Type.systemBars())
                 it.systemBarsBehavior =
                     android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
