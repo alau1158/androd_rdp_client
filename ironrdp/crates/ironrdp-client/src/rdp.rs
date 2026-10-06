@@ -3071,7 +3071,7 @@ async fn active_session(
     #[cfg(feature = "udp")]
     if udp_tunnel.transport.is_some() {
         active_stage.enable_reliable_udp_dvc_tunnel()?;
-        trace!("Reliable UDP tunnel established; awaiting DVC Soft-Sync");
+        info!("Reliable UDP tunnel established; awaiting DVC Soft-Sync");
     }
     active_stage.set_window_support_level(window_support_level);
     if let Some(execute) = initial_rail_execute {
