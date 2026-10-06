@@ -96,8 +96,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun launchEngine(profile: ConnectionProfile) {
+        SessionDiagnostics.appendLine(this, "engine: button tapped (${profile.host}:${profile.port})")
         val (displayW, displayH) = SessionLauncher.displaySize(this)
         val (w, h) = profile.resolution.sizeOr(displayW, displayH)
+        SessionDiagnostics.appendLine(this, "engine: starting RdpSessionActivity ${w}x${h}")
         val intent = android.content.Intent(this, com.dexrdp.engine.RdpSessionActivity::class.java).apply {
             putExtra("host", profile.host)
             putExtra("port", profile.port)
@@ -108,6 +110,7 @@ class MainActivity : ComponentActivity() {
             putExtra("height", h)
         }
         startActivity(intent)
+        SessionDiagnostics.appendLine(this, "engine: startActivity returned")
     }
 
     private fun connectWithKeyboardCheck(profile: ConnectionProfile) {

@@ -8,8 +8,16 @@ import java.nio.ByteBuffer
  */
 object NativeRdp {
 
-    init {
+    @Volatile
+    private var loaded = false
+
+    /** Loads libdexrdp_client.so on demand. Called explicitly so the failure (or
+     *  crash) happens after the caller has written a breadcrumb to the log. */
+    @Synchronized
+    fun ensureLoaded() {
+        if (loaded) return
         System.loadLibrary("dexrdp_client")
+        loaded = true
     }
 
     interface Callback {

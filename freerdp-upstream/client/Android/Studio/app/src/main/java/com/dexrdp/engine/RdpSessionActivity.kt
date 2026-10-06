@@ -28,9 +28,15 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback {
     private var desktopHeight = 1080
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val logFile = File(File(filesDir, "logs").apply { mkdirs() }, "freerdp.log")
+        fun crumb(msg: String) = runCatching { logFile.appendText("engine: $msg\n") }
+        crumb("onCreate entered")
+
         super.onCreate(savedInstanceState)
+        crumb("super.onCreate done")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         hideSystemBars()
+        crumb("window setup done")
 
         val host = intent.getStringExtra("host").orEmpty()
         val port = intent.getIntExtra("port", 3389)
@@ -40,6 +46,7 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback {
         desktopWidth = intent.getIntExtra("width", 1920)
         desktopHeight = intent.getIntExtra("height", 1080)
 
+        crumb("building views")
         val root = FrameLayout(this)
         val view = RemoteView(this)
         remoteView = view
@@ -55,15 +62,20 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback {
         root.addView(status, FrameLayout.LayoutParams(-2, -2))
         setContentView(root)
 
-        val logFile = File(File(filesDir, "logs").apply { mkdirs() }, "freerdp.log")
-        fun crumb(msg: String) = runCatching { logFile.appendText("engine: $msg\n") }
+        crumb("before ensureLoaded")
+        try {
+            NativeRdp.ensureLoaded()
+            crumb("ensureLoaded ok")
+        } catch (t: Throwable) {
+            crumb("ensureLoaded threw: $t\n${t.stackTraceToString()}")
+        }
 
-        crumb("activity onCreate, before class load")
+        crumb("before setLogPath")
         try {
             NativeRdp.nativeSetLogPath(logFile.absolutePath)
             crumb("setLogPath ok")
         } catch (t: Throwable) {
-            crumb("setLogPath threw: $t")
+            crumb("setLogPath threw: $t\n${t.stackTraceToString()}")
         }
 
         val buffer = ByteBuffer.allocateDirect(desktopWidth * desktopHeight * 4)
@@ -107,6 +119,7 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (handle == 0L) return super.onKeyDown(keyCode, event)
         val scan = KeyMap.scancode(keyCode)
         if (scan >= 0) {
             NativeRdp.nativeSendKey(handle, scan, true)
@@ -116,6 +129,7 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback {
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (handle == 0L) return super.onKeyUp(keyCode, event)
         val scan = KeyMap.scancode(keyCode)
         if (scan >= 0) {
             NativeRdp.nativeSendKey(handle, scan, false)
@@ -137,6 +151,7 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback {
     }
 
     private fun sendMouse(x: Int, y: Int, flags: Int) {
+        if (handle == 0L) return
         NativeRdp.nativeSendMouse(handle, x, y, flags)
     }
 

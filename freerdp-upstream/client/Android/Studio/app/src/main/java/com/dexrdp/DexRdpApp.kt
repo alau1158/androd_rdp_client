@@ -96,6 +96,11 @@ class DexRdpApp : GlobalApp() {
 
         Log.e(LOG_TAG, report)
 
+        runCatching {
+            val logDir = File(filesDir, "logs").apply { mkdirs() }
+            File(logDir, "freerdp.log").appendText("engine: JAVA CRASH\n$report\n")
+        }
+
         val directory = getExternalFilesDir("logs")
         val target = directory ?: File(filesDir, "logs")
         target.mkdirs()
