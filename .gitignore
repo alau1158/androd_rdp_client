@@ -1,0 +1,30 @@
+# --- Secrets and local configuration (never commit) ---
+local.properties
+release.properties
+*.jks
+*.keystore
+*.p12
+error.txt
+
+# --- Android / Gradle build output ---
+**/build/
+**/.gradle/
+.gradle/
+**/.cxx/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# --- Native build scratch and generated libraries ---
+freerdp-upstream/client/Android/Studio/freeRDPCore/src/main/cpp/external/
+**/jniLibs/
+
+# --- Rust build output ---
+**/target/
+
+# --- Misc ---
+*.log
+.DS_Store

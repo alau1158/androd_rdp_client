@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.keyboard" android:required="false" />
+
+    <supports-screens
+        android:anyDensity="true"
+        android:largeScreens="true"
+        android:normalScreens="true"
+        android:xlargeScreens="true" />
+
+    <application
+        android:name=".DexRdpApp"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:resizeableActivity="true"
+        android:theme="@style/Theme.DexRdp"
+        tools:replace="android:theme">
+
+        <meta-data
+            android:name="com.samsung.android.keepalive.density"
+            android:value="true" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.DexRdp"
+            android:resizeableActivity="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|keyboard|keyboardHidden|screenSize|smallestScreenSize|density|screenLayout|navigation"
+            android:windowSoftInputMode="adjustResize">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- The library declares this accessibility service as exported="false",
+             which stops Android listing it under Settings > Accessibility. The
+             system must be able to bind to it, so force it exported. -->
+        <service
+            android:name="com.freerdp.freerdpcore.presentation.KeyboardAccessibilityService"
+            android:label="DeX RDP Physical Keyboard"
+            android:exported="true"
+            tools:replace="android:exported,android:label" />
+    </application>
+</manifest>
