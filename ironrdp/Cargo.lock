@@ -2893,6 +2893,8 @@ dependencies = [
  "jni 0.21.1",
  "smallvec",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -20,6 +20,43 @@ use jni::objects::{GlobalRef, JByteBuffer, JClass, JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jlong};
 use jni::JNIEnv;
 use smallvec::smallvec;
+use std::sync::{Once, OnceLock};
+
+static LOG_PATH: OnceLock<String> = OnceLock::new();
+static INIT_LOG: Once = Once::new();
+
+/// Appends tracing output to the log file shared with the rest of the app.
+struct FileAppender;
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for FileAppender {
+    type Writer = std::fs::File;
+    fn make_writer(&'a self) -> Self::Writer {
+        let path = LOG_PATH.get().map(String::as_str).unwrap_or("/dev/null");
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .or_else(|_| std::fs::File::open("/dev/null"))
+            .unwrap_or_else(|_| unreachable!())
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeSetLogPath(
+    mut env: JNIEnv,
+    _cls: JClass,
+    path: JString,
+) {
+    let path = jstring_to_string(&mut env, &path);
+    let _ = LOG_PATH.set(path);
+    INIT_LOG.call_once(|| {
+        let _ = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(FileAppender)
+            .with_max_level(tracing::Level::DEBUG)
+            .try_init();
+    });
+}
 
 struct Session {
     input: RdpInputSender,
@@ -64,6 +101,8 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeConnect(
     let password = jstring_to_string(&mut env, &password);
     let domain = jstring_to_string(&mut env, &domain);
 
+    tracing::info!("nativeConnect host={host} port={port} size={width}x{height} user={username}");
+
     let callback_ref: GlobalRef = match env.new_global_ref(&callback) {
         Ok(r) => r,
         Err(_) => return 0,
@@ -89,6 +128,7 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeConnect(
         }
 
         let config = builder.build().map_err(|e| format!("config: {e}"))?;
+        tracing::info!("engine config built ok");
 
         let frame_buffer = env
             .new_global_ref(frame_buffer)
@@ -101,13 +141,16 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeConnect(
 
         // Session thread: connect + run (includes the UDP sideband).
         std::thread::spawn(move || {
-            match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(rt) => rt.block_on(client.run()),
-                Err(_) => {}
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                    Ok(rt) => rt.block_on(client.run()),
+                    Err(e) => tracing::error!("session runtime build failed: {e}"),
+                }
+            }));
+            if result.is_err() {
+                tracing::error!("session thread panicked");
             }
+            tracing::info!("session thread ended");
         });
 
         // Output pump thread: forwards frames and lifecycle events to Kotlin.

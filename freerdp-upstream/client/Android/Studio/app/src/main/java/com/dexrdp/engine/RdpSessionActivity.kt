@@ -10,6 +10,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
+import java.io.File
 import java.nio.ByteBuffer
 
 /**
@@ -54,14 +55,22 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback {
         root.addView(status, FrameLayout.LayoutParams(-2, -2))
         setContentView(root)
 
+        val logFile = File(File(filesDir, "logs").apply { mkdirs() }, "freerdp.log")
+        NativeRdp.nativeSetLogPath(logFile.absolutePath)
+
         val buffer = ByteBuffer.allocateDirect(desktopWidth * desktopHeight * 4)
         frameBuffer = buffer
 
-        handle = NativeRdp.nativeConnect(
-            host, port, user, pass, domain,
-            desktopWidth, desktopHeight,
-            buffer, this
-        )
+        try {
+            handle = NativeRdp.nativeConnect(
+                host, port, user, pass, domain,
+                desktopWidth, desktopHeight,
+                buffer, this
+            )
+        } catch (t: Throwable) {
+            logFile.appendText("engine connect threw: $t\n${t.stackTraceToString()}\n")
+            status.text = "Engine error: $t"
+        }
 
         if (handle == 0L) {
             Toast.makeText(this, "Engine refused to start (see log)", Toast.LENGTH_LONG).show()

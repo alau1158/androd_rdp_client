@@ -16,6 +16,8 @@ ironrdp-tls = { path = "../ironrdp-tls", features = ["rustls-ring"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros"] }
 smallvec = "1"
 jni = "0.21"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
 [lints]
 workspace = true
