@@ -1235,6 +1235,27 @@ Java_com_freerdp_freerdpcore_services_LibFreeRDP_freerdp_1send_1cursor_1event(
 	return JNI_TRUE;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_freerdp_freerdpcore_services_LibFreeRDP_freerdp_1send_1extended_1cursor_1event(
+    JNIEnv* env, jclass cls, jlong instance, jint x, jint y, jint flags)
+{
+	ANDROID_EVENT* event;
+	freerdp* inst = (freerdp*)instance;
+	event = (ANDROID_EVENT*)android_event_cursor_x_new(flags, x, y);
+
+	if (!event)
+		return JNI_FALSE;
+
+	if (!android_push_event(inst, event))
+	{
+		android_event_free(event);
+		return JNI_FALSE;
+	}
+
+	WLog_DBG(TAG, "send_extended_cursor_event: (%d, %d), %d", x, y, flags);
+	return JNI_TRUE;
+}
+
 static jboolean android_push_clipboard_event(freerdp* inst, const void* data, size_t data_length,
                                              const char* mimeType)
 {

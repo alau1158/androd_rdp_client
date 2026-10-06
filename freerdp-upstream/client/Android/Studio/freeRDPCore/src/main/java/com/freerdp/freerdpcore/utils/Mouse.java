@@ -50,6 +50,21 @@ public class Mouse
 		return (PTRFLAGS_MBUTTON | (down ? PTRFLAGS_DOWN : 0));
 	}
 
+	// Extended mouse buttons (PTRXFLAGS): X1 is "back", X2 is "forward".
+	private final static int PTRXFLAGS_BUTTON1 = 0x0001;
+	private final static int PTRXFLAGS_BUTTON2 = 0x0002;
+	private final static int PTRXFLAGS_DOWN = 0x8000;
+
+	public static int getXButton1Event(boolean down)
+	{
+		return (PTRXFLAGS_BUTTON1 | (down ? PTRXFLAGS_DOWN : 0));
+	}
+
+	public static int getXButton2Event(boolean down)
+	{
+		return (PTRXFLAGS_BUTTON2 | (down ? PTRXFLAGS_DOWN : 0));
+	}
+
 	public static int getMoveEvent()
 	{
 		return PTRFLAGS_MOVE;

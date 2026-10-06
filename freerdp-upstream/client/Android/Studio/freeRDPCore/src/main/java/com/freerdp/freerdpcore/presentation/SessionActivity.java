@@ -709,14 +709,34 @@ public class SessionActivity extends AppCompatActivity
 	@Override public boolean onKeyDown(int keycode, KeyEvent event)
 	{
 		if (keycode == KeyEvent.KEYCODE_BACK)
+		{
+			if (inputManager.sendXButton(1, true))
+				return true;
 			return super.onKeyDown(keycode, event);
+		}
+		if (keycode == KeyEvent.KEYCODE_FORWARD)
+		{
+			if (inputManager.sendXButton(2, true))
+				return true;
+			return super.onKeyDown(keycode, event);
+		}
 		return inputManager.onAndroidKeyEvent(event);
 	}
 
 	@Override public boolean onKeyUp(int keycode, KeyEvent event)
 	{
 		if (keycode == KeyEvent.KEYCODE_BACK)
+		{
+			if (inputManager.sendXButton(1, false))
+				return true;
 			return super.onKeyUp(keycode, event);
+		}
+		if (keycode == KeyEvent.KEYCODE_FORWARD)
+		{
+			if (inputManager.sendXButton(2, false))
+				return true;
+			return super.onKeyUp(keycode, event);
+		}
 		return inputManager.onAndroidKeyEvent(event);
 	}
 

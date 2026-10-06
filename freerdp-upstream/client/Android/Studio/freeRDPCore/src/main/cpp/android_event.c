@@ -126,6 +126,15 @@ static BOOL android_process_event(ANDROID_EVENT_QUEUE* queue, freerdp* inst)
 			}
 			break;
 
+			case EVENT_TYPE_CURSOR_X:
+			{
+				ANDROID_EVENT_CURSOR* cursor_event = (ANDROID_EVENT_CURSOR*)event;
+
+				rc = freerdp_input_send_extended_mouse_event(context->input, cursor_event->flags,
+				                                             cursor_event->x, cursor_event->y);
+			}
+			break;
+
 			case EVENT_TYPE_CLIPBOARD:
 			{
 				ANDROID_EVENT_CLIPBOARD* clipboard_event = (ANDROID_EVENT_CLIPBOARD*)event;
@@ -260,6 +269,21 @@ ANDROID_EVENT_CURSOR* android_event_cursor_new(UINT16 flags, UINT16 x, UINT16 y)
 static void android_event_cursor_free(ANDROID_EVENT_CURSOR* event)
 {
 	free(event);
+}
+
+ANDROID_EVENT_CURSOR* android_event_cursor_x_new(UINT16 flags, UINT16 x, UINT16 y)
+{
+	ANDROID_EVENT_CURSOR* event;
+	event = (ANDROID_EVENT_CURSOR*)calloc(1, sizeof(ANDROID_EVENT_CURSOR));
+
+	if (!event)
+		return nullptr;
+
+	event->type = EVENT_TYPE_CURSOR_X;
+	event->x = x;
+	event->y = y;
+	event->flags = flags;
+	return event;
 }
 
 ANDROID_EVENT* android_event_disconnect_new(void)
@@ -410,6 +434,10 @@ void android_event_free(ANDROID_EVENT* event)
 			break;
 
 		case EVENT_TYPE_CURSOR:
+			android_event_cursor_free((ANDROID_EVENT_CURSOR*)event);
+			break;
+
+		case EVENT_TYPE_CURSOR_X:
 			android_event_cursor_free((ANDROID_EVENT_CURSOR*)event);
 			break;
 

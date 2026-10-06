@@ -56,6 +56,10 @@ public class SessionInputManager
 	private int screenWidth;
 	private int screenHeight;
 	private int discardedMoveEvents = 0;
+	// Last pointer position, used to place events (e.g. the X buttons) that are
+	// delivered without coordinates.
+	private int lastMouseX = 0;
+	private int lastMouseY = 0;
 	// we asked the IME to show; the window has not necessarily animated it in yet
 	private boolean softInputRequested = false;
 	// the IME reported a non-zero inset, i.e. it really is on screen
@@ -251,6 +255,17 @@ public class SessionInputManager
 		return true;
 	}
 
+	// Sends the X1 (button == 1) or X2 (button == 2) mouse side button at the last
+	// pointer position. Returns false when there is no live session.
+	public boolean sendXButton(int button, boolean down)
+	{
+		if (instance == 0)
+			return false;
+		final int flags = (button == 1) ? Mouse.getXButton1Event(down) : Mouse.getXButton2Event(down);
+		LibFreeRDP.sendExtendedCursorEvent(instance, lastMouseX, lastMouseY, flags);
+		return true;
+	}
+
 	// Toggles touch-pointer overlay visibility (driven by the menu).
 	public void toggleTouchPointer()
 	{
@@ -346,13 +361,35 @@ public class SessionInputManager
 	{
 		if (instance == 0)
 			return;
+		lastMouseX = x;
+		lastMouseY = y;
 		LibFreeRDP.sendCursorEvent(instance, x, y, Mouse.getRightButtonEvent(context, down));
+	}
+
+	@Override public void onSessionViewXButton1(int x, int y, boolean down)
+	{
+		if (instance == 0)
+			return;
+		lastMouseX = x;
+		lastMouseY = y;
+		LibFreeRDP.sendExtendedCursorEvent(instance, x, y, Mouse.getXButton1Event(down));
+	}
+
+	@Override public void onSessionViewXButton2(int x, int y, boolean down)
+	{
+		if (instance == 0)
+			return;
+		lastMouseX = x;
+		lastMouseY = y;
+		LibFreeRDP.sendExtendedCursorEvent(instance, x, y, Mouse.getXButton2Event(down));
 	}
 
 	@Override public void onSessionViewMove(int x, int y)
 	{
 		if (instance == 0)
 			return;
+		lastMouseX = x;
+		lastMouseY = y;
 		sendDelayedMoveEvent(x, y);
 	}
 
@@ -360,6 +397,8 @@ public class SessionInputManager
 	{
 		if (instance == 0)
 			return;
+		lastMouseX = x;
+		lastMouseY = y;
 		LibFreeRDP.sendCursorEvent(instance, x, y, Mouse.getMoveEvent());
 	}
 

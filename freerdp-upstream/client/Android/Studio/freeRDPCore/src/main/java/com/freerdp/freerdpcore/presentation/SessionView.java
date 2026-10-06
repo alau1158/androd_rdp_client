@@ -406,6 +406,12 @@ public class SessionView extends View
 				case MotionEvent.BUTTON_TERTIARY:
 					sessionViewListener.onSessionViewMiddleTouch(x, y, down);
 					return true;
+				case MotionEvent.BUTTON_BACK:
+					sessionViewListener.onSessionViewXButton1(x, y, down);
+					return true;
+				case MotionEvent.BUTTON_FORWARD:
+					sessionViewListener.onSessionViewXButton2(x, y, down);
+					return true;
 				default:
 					return true; // consume unknown buttons silently
 			}
@@ -436,6 +442,10 @@ public class SessionView extends View
 		void onSessionViewMiddleTouch(int x, int y, boolean down);
 
 		void onSessionViewRightTouch(int x, int y, boolean down);
+
+		void onSessionViewXButton1(int x, int y, boolean down);
+
+		void onSessionViewXButton2(int x, int y, boolean down);
 
 		void onSessionViewMove(int x, int y);
 

@@ -165,6 +165,8 @@ public class LibFreeRDP
 	                                                      int width, int height);
 
 	private static native boolean freerdp_send_cursor_event(long inst, int x, int y, int flags);
+	private static native boolean freerdp_send_extended_cursor_event(long inst, int x, int y,
+	                                                                 int flags);
 
 	private static native boolean freerdp_send_key_event(long inst, int keycode, boolean down);
 
@@ -563,6 +565,12 @@ public class LibFreeRDP
 	public static boolean sendCursorEvent(long inst, int x, int y, int flags)
 	{
 		return freerdp_send_cursor_event(inst, x, y, flags);
+	}
+
+	/** Sends the extended mouse event, used for the X1/X2 (back/forward) buttons. */
+	public static boolean sendExtendedCursorEvent(long inst, int x, int y, int flags)
+	{
+		return freerdp_send_extended_cursor_event(inst, x, y, flags);
 	}
 
 	public static boolean sendKeyEvent(long inst, int keycode, boolean down)
