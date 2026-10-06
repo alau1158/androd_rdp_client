@@ -15,6 +15,7 @@ use ironrdp_client::output_channel::output_channel;
 use ironrdp_client::rdp::{RdpClient, RdpInputEvent, RdpInputSender, RdpOutputEvent};
 use ironrdp_pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags};
 use ironrdp_pdu::input::mouse::{MousePdu, PointerFlags};
+use ironrdp_pdu::rdp::capability_sets::MajorPlatformType;
 use ironrdp_tls::CertificateValidation;
 use jni::objects::{GlobalRef, JByteBuffer, JClass, JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jlong};
@@ -147,6 +148,10 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeConnect(
             .with_tls(true)
             .with_credssp(true)
             .with_udp_transport(true)
+            .with_client_build(1)
+            .with_client_dir(r"C:\")
+            .with_client_name("DeX RDP")
+            .with_platform(MajorPlatformType::ANDROID)
             .with_certificate_validation(CertificateValidation::DangerouslyAcceptInvalidCertificate);
 
         if !domain.is_empty() {
