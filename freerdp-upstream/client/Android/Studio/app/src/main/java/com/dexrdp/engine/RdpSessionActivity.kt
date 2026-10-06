@@ -56,11 +56,20 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback {
         setContentView(root)
 
         val logFile = File(File(filesDir, "logs").apply { mkdirs() }, "freerdp.log")
-        NativeRdp.nativeSetLogPath(logFile.absolutePath)
+        fun crumb(msg: String) = runCatching { logFile.appendText("engine: $msg\n") }
+
+        crumb("activity onCreate, before class load")
+        try {
+            NativeRdp.nativeSetLogPath(logFile.absolutePath)
+            crumb("setLogPath ok")
+        } catch (t: Throwable) {
+            crumb("setLogPath threw: $t")
+        }
 
         val buffer = ByteBuffer.allocateDirect(desktopWidth * desktopHeight * 4)
         frameBuffer = buffer
 
+        crumb("calling nativeConnect")
         try {
             handle = NativeRdp.nativeConnect(
                 host, port, user, pass, domain,
@@ -68,9 +77,10 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback {
                 buffer, this
             )
         } catch (t: Throwable) {
-            logFile.appendText("engine connect threw: $t\n${t.stackTraceToString()}\n")
+            crumb("nativeConnect threw: $t\n${t.stackTraceToString()}")
             status.text = "Engine error: $t"
         }
+        crumb("nativeConnect returned handle=$handle")
 
         if (handle == 0L) {
             Toast.makeText(this, "Engine refused to start (see log)", Toast.LENGTH_LONG).show()

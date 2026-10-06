@@ -41,6 +41,31 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for FileAppender {
     }
 }
 
+extern "C" fn dexrdp_crash_handler(sig: libc::c_int) {
+    use std::io::Write;
+    if let Some(path) = LOG_PATH.get() {
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(f, "\n==== NATIVE CRASH signal {sig} ====");
+            let bt = backtrace::Backtrace::new();
+            let _ = writeln!(f, "{bt:?}");
+            let _ = f.flush();
+        }
+    }
+    unsafe {
+        libc::signal(sig, libc::SIG_DFL);
+        libc::raise(sig);
+    }
+}
+
+fn install_crash_handlers() {
+    unsafe {
+        libc::signal(libc::SIGSEGV, dexrdp_crash_handler as usize);
+        libc::signal(libc::SIGABRT, dexrdp_crash_handler as usize);
+        libc::signal(libc::SIGBUS, dexrdp_crash_handler as usize);
+        libc::signal(libc::SIGILL, dexrdp_crash_handler as usize);
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeSetLogPath(
     mut env: JNIEnv,
@@ -55,6 +80,7 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeSetLogPath(
             .with_writer(FileAppender)
             .with_max_level(tracing::Level::DEBUG)
             .try_init();
+        install_crash_handlers();
     });
 }
 
