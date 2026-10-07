@@ -66,6 +66,9 @@ pub(crate) struct Driver {
     /// dropped or treated as a fatal error.
     pending_write: Option<Vec<u8>>,
     stream_released: bool,
+    /// Count of data datagrams logged so far; the log is bounded so a busy
+    /// session cannot bury the interesting early packets.
+    data_send_logs: u8,
 }
 
 impl Driver {
@@ -85,6 +88,7 @@ impl Driver {
             clock: Clock::new(),
             pending_write: None,
             stream_released: false,
+            data_send_logs: 0,
         }
     }
 
@@ -281,6 +285,10 @@ impl Driver {
             // established (only prefix-framed V2 packets), so there is
             // nothing to check on the data path.
             let bytes = if self.conn.is_established() {
+                if self.data_send_logs < 12 {
+                    self.data_send_logs += 1;
+                    debug!(len = transmit.contents.len(), head = %hex_head(&transmit.contents, 10), "Sending data datagram");
+                }
                 transmit.contents
             } else {
                 let bytes = pad_handshake_datagram(transmit.contents);

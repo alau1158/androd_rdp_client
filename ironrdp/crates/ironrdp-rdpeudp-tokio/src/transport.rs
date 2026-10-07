@@ -480,6 +480,12 @@ pub async fn connect_udp(config: UdpTransportConfig) -> Result<UdpTransport, Udp
     }
     connection_config.cookie_hash = Some(cookie_hash(&config.tunnel_config));
 
+    // The 2^6 default receive window caps how much the peer keeps in flight and
+    // throttles the graphics sideband. The interoperating macOS server uses
+    // 2^12; advertise at least that so the server can pipeline more of the
+    // screen without stalling on our acknowledgements.
+    connection_config.log_window_size = connection_config.log_window_size.max(12);
+
     let conn = RdpeudpConnection::connect(connection_config, Clock::new().now()).map_err(|error| {
         UdpTransportError::handshake("connect UDP", DriverError::rdpeudp("build RDP-UDP connection", error))
     })?;
@@ -515,10 +521,22 @@ pub async fn connect_udp(config: UdpTransportConfig) -> Result<UdpTransport, Udp
 
     debug!("RDPEUDP2 handshake complete, starting TLS");
 
+    // The 130 s default exists only to leave room for an interactive
+    // certificate decision. Without a validation callback there is nothing to
+    // wait for, and a server that silently ignores the TLS ClientHello would
+    // otherwise hang the whole connection for two minutes before the caller
+    // can fall back to TCP. Bound the non-interactive case so a stalled
+    // sideband fails fast.
+    let tls_timeout = if config.tls.certificate_validation_callback.is_some() {
+        config.tls_timeout
+    } else {
+        config.tls_timeout.min(Duration::from_secs(8))
+    };
+
     // Phase 3: TLS handshake over the RDPEUDP2 stream
     let rdpeudp_stream = RdpeudpStream::new(Arc::clone(&shared));
     let tls_stream = tokio::time::timeout(
-        config.tls_timeout,
+        tls_timeout,
         tls_upgrade(
             rdpeudp_stream,
             &config.server_name,
@@ -529,7 +547,7 @@ pub async fn connect_udp(config: UdpTransportConfig) -> Result<UdpTransport, Udp
     )
     .await
     .map_err(|_| {
-        debug!(timeout = ?config.tls_timeout, "TLS handshake timed out");
+        debug!(timeout = ?tls_timeout, "TLS handshake timed out");
         UdpTransportError::tls_timeout("connect udp")
     })?
     .map_err(|error| {
