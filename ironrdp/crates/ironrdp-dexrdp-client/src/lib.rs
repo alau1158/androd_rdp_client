@@ -17,6 +17,7 @@ use ironrdp_pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags};
 use ironrdp_pdu::input::mouse::{MousePdu, PointerFlags};
 use ironrdp_pdu::input::mouse_x::{MouseXPdu, PointerXFlags};
 use ironrdp_pdu::rdp::capability_sets::MajorPlatformType;
+use ironrdp_pdu::rdp::client_info::{OptionalSystemTime, TimezoneInfo};
 use ironrdp_tls::CertificateValidation;
 use jni::objects::{GlobalRef, JByteBuffer, JClass, JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jlong};
@@ -26,6 +27,22 @@ use std::sync::{Once, OnceLock};
 
 static LOG_PATH: OnceLock<String> = OnceLock::new();
 static INIT_LOG: Once = Once::new();
+
+/// Default tracing filter. `info` overall, with the connection and RDP-UDP
+/// transport crates at `debug` so the multitransport negotiation stays visible,
+/// while the per-bitmap session and graphics decoders are quieted. Without this,
+/// the fast-path DEBUG flood fills the in-app log tail (last 400 lines) before
+/// the UDP bootstrap result can be read.
+const DEFAULT_LOG_FILTER: &str = "info,\
+dexrdp_client=debug,\
+ironrdp_connector=debug,\
+ironrdp_client=debug,\
+ironrdp_rdpeudp=debug,\
+ironrdp_rdpeudp_tokio=debug,\
+ironrdp_rdpemt=debug,\
+ironrdp_session=warn,\
+ironrdp_graphics=warn,\
+ironrdp_echo=warn";
 
 /// Appends tracing output to the log file shared with the rest of the app.
 struct FileAppender;
@@ -77,10 +94,12 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeSetLogPath(
     let path = jstring_to_string(&mut env, &path);
     let _ = LOG_PATH.set(path);
     INIT_LOG.call_once(|| {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER));
         let _ = tracing_subscriber::fmt()
             .with_ansi(false)
             .with_writer(FileAppender)
-            .with_max_level(tracing::Level::DEBUG)
+            .with_env_filter(filter)
             .try_init();
         install_crash_handlers();
     });
@@ -94,6 +113,44 @@ fn jstring_to_string(env: &mut JNIEnv, s: &JString) -> String {
     env.get_string(s)
         .map(|v| v.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// Derive the client's current time-zone offset from the C library so the remote
+/// Windows session is not left on UTC.
+///
+/// The connector otherwise sends `TimezoneInfo::default()` (bias 0). We advertise
+/// the offset in effect *now*, with no DST transition table: Windows reapplies the
+/// client time zone on every connect, so a reconnect after a DST change corrects it.
+fn local_timezone_info() -> TimezoneInfo {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as libc::time_t)
+        .unwrap_or(0);
+
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&now, &mut tm) }.is_null() {
+        return TimezoneInfo::default();
+    }
+
+    // RDP `bias` is "UTC = local + bias" in minutes; tm_gmtoff is seconds east.
+    let bias = -((tm.tm_gmtoff / 60) as i32);
+    let name = if tm.tm_zone.is_null() {
+        String::new()
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(tm.tm_zone) }
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    TimezoneInfo {
+        bias,
+        standard_name: name.clone(),
+        standard_date: OptionalSystemTime(None),
+        standard_bias: 0,
+        daylight_name: name,
+        daylight_date: OptionalSystemTime(None),
+        daylight_bias: 0,
+    }
 }
 
 fn report_failure(env: &mut JNIEnv, callback: &JObject, message: &str) {
@@ -153,6 +210,8 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeConnect(
             .with_client_dir(r"C:\")
             .with_client_name("DeX RDP")
             .with_platform(MajorPlatformType::ANDROID)
+            .with_pointer_software_rendering(true)
+            .with_timezone_info(local_timezone_info())
             .with_certificate_validation(CertificateValidation::DangerouslyAcceptInvalidCertificate);
 
         if !domain.is_empty() {

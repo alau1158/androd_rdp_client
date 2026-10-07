@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Rect
+import android.view.PointerIcon
 import android.view.View
 import java.nio.ByteBuffer
 
@@ -11,6 +12,13 @@ import java.nio.ByteBuffer
 class RemoteView(context: Context) : View(context) {
 
     private var bitmap: Bitmap? = null
+
+    init {
+        // The Windows cursor is composited into the frame (software pointer
+        // rendering), so hide Android's own pointer; otherwise both are visible.
+        // Same mechanism the FreeRDP engine uses.
+        setPointerIcon(PointerIcon.getSystemIcon(context, PointerIcon.TYPE_NULL))
+    }
 
     fun updateFrame(buffer: ByteBuffer, width: Int, height: Int) {
         if (width <= 0 || height <= 0) return

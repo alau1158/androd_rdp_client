@@ -28,3 +28,5 @@ freerdp-upstream/client/Android/Studio/freeRDPCore/src/main/cpp/external/
 # --- Misc ---
 *.log
 .DS_Store
+*.pcapng
+*.pcap

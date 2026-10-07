@@ -42,7 +42,9 @@ use crate::pdu::v2_control::AckOfAcksPayload;
 use crate::pdu::v2_data::{DataBody, DataHeader};
 use crate::pdu::v2_flags::V2Flags;
 use crate::pdu::v2_header::{LOG_WINDOW_SIZE_MAX, V2Header};
-use crate::pdu::{SourceData, SourcePayloadHeader, V1AckOfAcksHeader, V1Datagram, V2Packet};
+use crate::pdu::{
+    CorrelationIdPayload, SourceData, SourcePayloadHeader, V1AckOfAcksHeader, V1Datagram, V2Packet,
+};
 use crate::recv_window::RecvWindow;
 use crate::reliability::ReliabilityController;
 use crate::rtt::RttEstimator;
@@ -135,6 +137,15 @@ pub struct ConnectionConfig {
     /// SYN, which is the check 3.1.5.1.1 asks of it.
     pub cookie_hash: Option<[u8; 32]>,
 
+    /// 16-byte connection correlation identifier sent in the client SYN as the
+    /// `RDPUDP_CORRELATION_ID_PAYLOAD` ([MS-RDPEUDP] 2.2.2.8).
+    ///
+    /// The correlation id rides the SYN only when this is `Some`, which sets the
+    /// `RDPUDP_FLAG_CORRELATION_ID` flag. Windows' RDP-UDP stack answers the SYN
+    /// only when the payload is present, so a reliable connection that leaves
+    /// this `None` is silently ignored by the server.
+    pub correlation_id: Option<[u8; 16]>,
+
     /// The protocol version the client SYN offers (MS-RDPEUDP 2.2.2.9).
     ///
     /// Version 3 selects MS-RDPEUDP2 and requires `cookie_hash`. Offering
@@ -154,6 +165,7 @@ impl Default for ConnectionConfig {
             idle_timeout: Duration::from_secs(65),
             keep_alive_interval: Duration::from_secs(8),
             cookie_hash: None,
+            correlation_id: None,
             offer_version: UdpVersion::V3,
         }
     }
@@ -1093,7 +1105,10 @@ impl RdpeudpConnection {
                 upstream_mtu: self.config.upstream_mtu,
                 downstream_mtu: self.config.downstream_mtu,
             }),
-            correlation_id: None,
+            correlation_id: self
+                .config
+                .correlation_id
+                .map(|correlation_id| CorrelationIdPayload { correlation_id }),
             syn_data_ex: Some(SynDataExPayload {
                 syn_ex_flags: SynExFlags::VERSION_INFO_VALID,
                 // Version 3 is what selects the MS-RDPEUDP2 data transfer

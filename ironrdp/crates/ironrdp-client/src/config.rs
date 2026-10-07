@@ -767,6 +767,7 @@ pub struct ConfigBuilder {
     autologon: Option<bool>,
     enable_server_pointer: Option<bool>,
     pointer_software_rendering: Option<bool>,
+    timezone_info: Option<ironrdp_pdu::rdp::client_info::TimezoneInfo>,
     performance_flags: Option<ironrdp_pdu::rdp::client_info::PerformanceFlags>,
     enable_audio_playback: Option<bool>,
     enable_audio_capture: Option<bool>,
@@ -1164,6 +1165,16 @@ impl ConfigBuilder {
     #[must_use]
     pub fn with_pointer_software_rendering(mut self, enabled: bool) -> Self {
         self.pointer_software_rendering = Some(enabled);
+        self
+    }
+
+    /// Set the client time-zone information advertised in the Client Info PDU.
+    ///
+    /// Without this the connector sends `TimezoneInfo::default()` (bias 0), which the
+    /// server interprets as UTC and applies to the remote session.
+    #[must_use]
+    pub fn with_timezone_info(mut self, timezone_info: ironrdp_pdu::rdp::client_info::TimezoneInfo) -> Self {
+        self.timezone_info = Some(timezone_info);
         self
     }
 
@@ -1658,7 +1669,6 @@ impl ConfigBuilder {
     #[cfg_attr(not(any(feature = "vmconnect", feature = "gateway")), expect(unused_mut))]
     pub fn build(mut self) -> anyhow::Result<Config> {
         use ironrdp_pdu::rdp::capability_sets::client_codecs_capabilities;
-        use ironrdp_pdu::rdp::client_info::TimezoneInfo;
 
         if let Some(load_balance_info) = &self.load_balance_info {
             anyhow::ensure!(
@@ -1950,7 +1960,7 @@ impl ConfigBuilder {
             support_dyn_vc_gfx_protocol: false,
             compression_type,
             performance_flags: self.performance_flags.unwrap_or_default(),
-            timezone_info: TimezoneInfo::default(),
+            timezone_info: self.timezone_info.unwrap_or_default(),
             alternate_shell: if remote_application_mode {
                 String::new()
             } else {

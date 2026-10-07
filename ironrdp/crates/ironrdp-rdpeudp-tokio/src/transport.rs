@@ -467,6 +467,17 @@ pub async fn connect_udp(config: UdpTransportConfig) -> Result<UdpTransport, Udp
     let connected_notify = Arc::new(Notify::new());
 
     let mut connection_config = config.connection_config;
+    // MS-RDPEUDP 3.1.5.1.1 step 2: the SYN's snInitialSequenceNumber MUST be a
+    // truly random value. Callers that leave the default 0 violate this and some
+    // servers silently ignore such a SYN.
+    if connection_config.initial_sequence_number == 0 {
+        connection_config.initial_sequence_number = random_sequence_number();
+    }
+    // MS-RDPEUDP 2.2.2.8: the client SYN carries a 16-byte correlation id.
+    // Windows' RDP-UDP stack answers the SYN only when it is present.
+    if connection_config.correlation_id.is_none() {
+        connection_config.correlation_id = Some(random_correlation_id());
+    }
     connection_config.cookie_hash = Some(cookie_hash(&config.tunnel_config));
 
     let conn = RdpeudpConnection::connect(connection_config, Clock::new().now()).map_err(|error| {
@@ -854,6 +865,60 @@ where
 /// cryptographic dependency.
 fn cookie_hash(tunnel_config: &TunnelConfig) -> [u8; 32] {
     Sha256::digest(tunnel_config.security_cookie).into()
+}
+
+/// A random 32-bit initial sequence number for the SYN (MS-RDPEUDP 3.1.5.1.1).
+///
+/// Reads from `/dev/urandom` (present on Android and Unix), falling back to a
+/// time-derived value so the field is never the zero default.
+fn random_sequence_number() -> u32 {
+    use std::io::Read as _;
+
+    if let Ok(mut urandom) = std::fs::File::open("/dev/urandom") {
+        let mut buf = [0u8; 4];
+        if urandom.read_exact(&mut buf).is_ok() {
+            return u32::from_ne_bytes(buf);
+        }
+    }
+
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    seed ^= seed >> 64;
+    u32::try_from(seed & u128::from(u32::MAX)).unwrap_or(1)
+}
+
+/// A 16-byte connection correlation id for the client SYN (MS-RDPEUDP 2.2.2.8).
+///
+/// 3.1.5.1.1 constrains three values: the first byte must not be `0x00` or
+/// `0xF4`, and no byte may be `0x0D`. Invalid bytes are replaced rather than
+/// redrawn; the field only needs to be distinct per connection, not uniformly
+/// random.
+fn random_correlation_id() -> [u8; 16] {
+    use std::io::Read as _;
+
+    let mut id = [0u8; 16];
+    let filled = std::fs::File::open("/dev/urandom")
+        .and_then(|mut urandom| urandom.read_exact(&mut id))
+        .is_ok();
+    if !filled {
+        id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0)
+            .to_le_bytes();
+    }
+
+    if id[0] == 0x00 || id[0] == 0xF4 {
+        id[0] = 0x01;
+    }
+    for byte in &mut id {
+        if *byte == 0x0D {
+            *byte = 0x0C;
+        }
+    }
+    id
 }
 
 #[cfg(test)]

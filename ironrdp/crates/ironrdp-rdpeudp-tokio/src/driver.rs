@@ -168,7 +168,7 @@ impl Driver {
                 // Branch 1: Incoming UDP datagram (highest priority)
                 result = self.socket.recv(&mut self.recv_buf), if has_room => {
                     let n = result.map_err(|error| DriverError::socket("receive datagram", error))?;
-                    trace!(len = n, "Received datagram");
+                    debug!(len = n, "Received UDP datagram");
                     let now = self.clock.now();
 
                     // handle_datagram takes &mut [u8] for in-place prefix byte swap
@@ -283,7 +283,9 @@ impl Driver {
             let bytes = if self.conn.is_established() {
                 transmit.contents
             } else {
-                pad_handshake_datagram(transmit.contents)
+                let bytes = pad_handshake_datagram(transmit.contents);
+                debug!(len = bytes.len(), head = %hex_head(&bytes, 64), "Sending handshake datagram");
+                bytes
             };
 
             self.socket
@@ -489,6 +491,19 @@ fn pad_handshake_datagram(mut bytes: Vec<u8>) -> Vec<u8> {
         bytes.resize(target, 0);
     }
     bytes
+}
+
+/// Lowercase hex of the first `limit` bytes, for comparing a SYNs fields against
+/// a known-good capture in the log.
+fn hex_head(bytes: &[u8], limit: usize) -> String {
+    use core::fmt::Write as _;
+
+    let n = bytes.len().min(limit);
+    let mut out = String::with_capacity(n * 2);
+    for byte in &bytes[..n] {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
 }
 
 /// Whether a datagram that the state machine rejected can simply be dropped.
