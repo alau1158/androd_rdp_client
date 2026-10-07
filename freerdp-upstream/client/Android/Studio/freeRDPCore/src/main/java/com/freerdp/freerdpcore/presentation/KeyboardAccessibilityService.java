@@ -29,8 +29,8 @@ public class KeyboardAccessibilityService extends AccessibilityService
 	 * holding Backspace, an arrow key, etc. repeats on the remote, for both the
 	 * FreeRDP session and the IronRDP engine.
 	 */
-	private static final long REPEAT_DELAY_MS = 500;
-	private static final long REPEAT_INTERVAL_MS = 50;
+	private static final long REPEAT_DELAY_MS = 700;
+	private static final long REPEAT_INTERVAL_MS = 55;
 
 	private final Handler repeatHandler = new Handler(Looper.getMainLooper());
 	private KeyEvent repeatingEvent;
@@ -84,19 +84,23 @@ public class KeyboardAccessibilityService extends AccessibilityService
 				return true;
 		}
 
-		if (!dispatch(event, toTarget))
-			return false;
-
-		if (event.getAction() == KeyEvent.ACTION_DOWN)
-		{
-			if (isRepeatable(event.getKeyCode()))
-				startRepeat(event, toTarget);
-		}
-		else if (event.getAction() == KeyEvent.ACTION_UP)
+		/*
+		 * Stop on the key-up regardless of whether the session "handles" it. The
+		 * FreeRDP KeyboardMapper reports non-Meta key-ups as unhandled, so keying
+		 * the stop off dispatch()'s result let the repeat outlive the key and
+		 * inject extra characters after release.
+		 */
+		if (event.getAction() == KeyEvent.ACTION_UP)
 		{
 			if (repeatingEvent != null && repeatingEvent.getKeyCode() == event.getKeyCode())
 				stopRepeat();
 		}
+
+		if (!dispatch(event, toTarget))
+			return false;
+
+		if (event.getAction() == KeyEvent.ACTION_DOWN && isRepeatable(event.getKeyCode()))
+			startRepeat(event, toTarget);
 
 		return true;
 	}
