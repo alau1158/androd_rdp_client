@@ -863,8 +863,24 @@ where
 /// is always over the same cookie the RDPEMT tunnel will present a moment
 /// later. The sans-I/O crate takes the finished hash and stays free of any
 /// cryptographic dependency.
+///
+/// The digest is emitted in Windows' DWORD-oriented wire view: each 4-byte word
+/// is byte-reversed relative to the canonical SHA-256 octet string. MS-RDPEUDP
+/// 2.2.2.9 calls for "eight network-order UINT32 values", and Windows' RDP-UDP
+/// stack compares the SYN's `cookieHash` against its digest held as UINT32s, so
+/// the canonical byte order is ignored. Windows clients (mstsc) therefore send
+/// the reversed-word form; independent interoperating servers match both.
 fn cookie_hash(tunnel_config: &TunnelConfig) -> [u8; 32] {
-    Sha256::digest(tunnel_config.security_cookie).into()
+    let digest: [u8; 32] = Sha256::digest(tunnel_config.security_cookie).into();
+
+    let mut wire = [0u8; 32];
+    for (word, chunk) in digest.chunks_exact(4).enumerate() {
+        wire[word * 4] = chunk[3];
+        wire[word * 4 + 1] = chunk[2];
+        wire[word * 4 + 2] = chunk[1];
+        wire[word * 4 + 3] = chunk[0];
+    }
+    wire
 }
 
 /// A random 32-bit initial sequence number for the SYN (MS-RDPEUDP 3.1.5.1.1).

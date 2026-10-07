@@ -1313,8 +1313,16 @@ impl RdpeudpConnection {
         // Karn's-algorithm check `sample_handshake_rtt` relies on.
         self.sample_handshake_rtt(now);
 
-        // Send final ACK to complete handshake
-        self.enqueue_final_ack(remote_isn);
+        // Versions 1 and 2 finish the legacy three-way handshake with an ACK.
+        // Version 3 switches to MS-RDPEUDP2 immediately after the SYN+ACK and
+        // MUST NOT send that legacy ACK ([MS-RDPEUDP2] 1.3.1). Windows obeys
+        // this: it moves to the RDP-UDP2 framing right after the SYN+ACK, so a
+        // trailing v1 ACK is parsed as a malformed RDP-UDP2 packet and the
+        // connection never establishes (the client's TLS ClientHello then goes
+        // unanswered). Only send it for the v1/v2 wire formats that expect it.
+        if wire != WireFormat::V2 {
+            self.enqueue_final_ack(remote_isn);
+        }
 
         // Transition to established
         self.transition_to_established(now);
@@ -1357,14 +1365,12 @@ impl RdpeudpConnection {
                 receive_window_size: 1u16 << u16::from(self.config.log_window_size),
                 flags: V1Flags::ACK,
             },
-            ack_vector: Some(V1AckVectorHeader {
-                elements: vec![V1AckVectorElement {
-                    state: VectorElementState::DatagramReceived,
-                    // One datagram (the SYN+ACK): wire runs are count - 1, see
-                    // process_v1_acknowledgement.
-                    length: 0,
-                }],
-            }),
+            // Windows expects the final handshake ACK to carry an *empty*,
+            // DWORD-aligned ACK vector (8-byte FEC header + 2-byte size 0 +
+            // 2 bytes padding). A populated vector of size 1 leaves the server
+            // ignoring the SYN+ACK acknowledgement, so the connection never
+            // establishes and the client's TLS ClientHello goes unanswered.
+            ack_vector: Some(V1AckVectorHeader { elements: Vec::new() }),
             ack_of_acks: None,
             syn_data: None,
             correlation_id: None,
