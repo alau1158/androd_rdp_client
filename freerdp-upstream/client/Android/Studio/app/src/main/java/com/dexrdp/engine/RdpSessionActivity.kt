@@ -11,6 +11,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
+import com.freerdp.freerdpcore.presentation.ApplicationSettingsActivity
 import com.freerdp.freerdpcore.presentation.PhysicalKeyboardRouter
 import java.io.File
 import java.nio.ByteBuffer
@@ -238,19 +239,21 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback, PhysicalKeyboardRoute
                 return true
             }
             MotionEvent.ACTION_SCROLL -> {
+                // Mirror the FreeRDP engine exactly, including its
+                // "invert scrolling" preference, so both engines scroll the
+                // same way.
+                val invert = ApplicationSettingsActivity.getInvertScrolling(this)
                 val v = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
                 val h = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
                 if (v != 0f) {
-                    sendMouse(
-                        x, y, MouseFlags.VERTICAL_WHEEL,
-                        if (v > 0) -MouseFlags.WHEEL_DELTA else MouseFlags.WHEEL_DELTA
-                    )
+                    var units = if (v > 0) -MouseFlags.WHEEL_DELTA else MouseFlags.WHEEL_DELTA
+                    if (invert) units = -units
+                    sendMouse(x, y, MouseFlags.VERTICAL_WHEEL, units)
                 }
                 if (h != 0f) {
-                    sendMouse(
-                        x, y, MouseFlags.HORIZONTAL_WHEEL,
-                        if (h > 0) MouseFlags.WHEEL_DELTA else -MouseFlags.WHEEL_DELTA
-                    )
+                    var units = if (h > 0) MouseFlags.WHEEL_DELTA else -MouseFlags.WHEEL_DELTA
+                    if (invert) units = -units
+                    sendMouse(x, y, MouseFlags.HORIZONTAL_WHEEL, units)
                 }
                 return true
             }
