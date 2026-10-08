@@ -267,13 +267,14 @@ static void* clipboard_synthesize_string(wClipboard* clipboard, UINT32 dstFormat
 			size_t wlen = 0;
 			WCHAR* wstr = ConvertUtf8NToWCharAlloc(crlf, crlfLen, &wlen);
 			winpr_znfree(crlf, crlfLen);
-			if (!wstr || (wlen == 0) || (wlen > UINT32_MAX / sizeof(WCHAR)))
+			if (!wstr || (wlen == 0) || (wlen >= UINT32_MAX / sizeof(WCHAR)))
 			{
 				winpr_znfree(wstr, wlen * sizeof(WCHAR));
 				return nullptr;
 			}
 
-			*pSize = WINPR_ASSERTING_INT_CAST(UINT32, wlen * sizeof(WCHAR));
+			/* CF_UNICODETEXT is null terminated, the size must include the terminator */
+			*pSize = WINPR_ASSERTING_INT_CAST(UINT32, (wlen + 1) * sizeof(WCHAR));
 			return wstr;
 		}
 		case CF_OEMTEXT:
@@ -282,12 +283,13 @@ static void* clipboard_synthesize_string(wClipboard* clipboard, UINT32 dstFormat
 			size_t esclen = 0;
 			char* escaped = winpr_utf8ToUtfEscapedString(utf8, utf8len, &esclen);
 			winpr_znfree(utf8, utf8len);
-			if (!escaped || (esclen == 0) || (esclen > UINT32_MAX))
+			if (!escaped || (esclen == 0) || (esclen >= UINT32_MAX))
 			{
 				winpr_znfree(escaped, esclen);
 				return nullptr;
 			}
-			*pSize = WINPR_ASSERTING_INT_CAST(UINT32, esclen);
+			/* CF_TEXT/CF_OEMTEXT are null terminated, the size must include the terminator */
+			*pSize = WINPR_ASSERTING_INT_CAST(UINT32, esclen + 1);
 			return escaped;
 		}
 		default:
