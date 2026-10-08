@@ -1235,8 +1235,16 @@ impl RdpeudpConnection {
         // Karn's-algorithm check `sample_handshake_rtt` relies on.
         self.sample_handshake_rtt(now);
 
-        // Send final ACK to complete handshake
-        self.enqueue_final_ack(remote_isn);
+        // Versions 1 and 2 finish the legacy three-way handshake with an ACK.
+        // Version 3 switches to MS-RDPEUDP2 immediately after the SYN+ACK and
+        // MUST NOT send that legacy ACK ([MS-RDPEUDP2] 1.3.1). Windows obeys
+        // this: it moves to the RDP-UDP2 framing right after the SYN+ACK, so a
+        // trailing v1 ACK is parsed as a malformed RDP-UDP2 packet and the
+        // connection never establishes (the client's TLS ClientHello then goes
+        // unanswered). Only send it for the v1/v2 wire formats that expect it.
+        if wire != WireFormat::V2 {
+            self.enqueue_final_ack(remote_isn);
+        }
 
         // Transition to established
         self.transition_to_established(now);
@@ -1333,9 +1341,20 @@ impl RdpeudpConnection {
             .as_ref()
             .expect("params must be set before transitioning to established");
 
-        // Data sequence numbers start at ISN + 1
-        let local_initial_data_seq = u64::from(params.local_isn) + 1;
-        let remote_initial_data_seq = u64::from(params.remote_isn) + 1;
+        // Data sequence numbers: MS-RDPEUDP (v1/v2) keeps one Source sequence
+        // space starting at ISN + 1. MS-RDPEUDP2 starts a *fresh* 16-bit
+        // DataSeqNum space at 1 — the random 32-bit SYN ISNs are not carried
+        // over (the interoperating macOS server documents this). Deriving the
+        // v2 sequence from the ISN put the first data packet far outside the
+        // server's receive window, so Windows silently dropped the ClientHello
+        // and the whole TLS-over-UDP handshake stalled.
+        let (local_initial_data_seq, remote_initial_data_seq) = match params.wire {
+            WireFormat::V1 { .. } => (
+                u64::from(params.local_isn) + 1,
+                u64::from(params.remote_isn) + 1,
+            ),
+            WireFormat::V2 => (1u64, 1u64),
+        };
 
         // MS-RDPEUDP2 numbers channel data from 1. MS-RDPEUDP (3.1.1.2) has a single
         // Source sequence space starting at the ISN + 1, so both windows use it.

@@ -134,20 +134,64 @@ UDP/EGFX options, resize, transport events).
   2. a random **snInitialSequenceNumber** (default 0 is silently ignored),
   3. the **cookie-hash DWORD byte order** (Windows compares the digest as UINT32s).
 
-**Current blocker (1.0.48):** the UDP sideband still does not establish — the
-server does not answer the SYN and the client falls back to TCP
-(`UDP multitransport bootstrap failed failure="handshake-timeout"`). The SYN is
-structurally correct now (random ISN + correlation id + reversed cookie hash,
-verified in `rdp_udp8.pcapng`), so either a further field differs or the Windows
-RDP-UDP stack is wedged after many test sessions. **Try restarting the Windows
-RDP service / rebooting before more code changes.**
+**Former blocker (1.0.48, SOLVED 2026-10-08):** the UDP sideband did not
+establish — the server answered the SYN then went totally silent on the TLS
+ClientHello, and the client died at the 65 s RDPEUDP idle timeout
+(`failure="tls"`). SYN was verified structurally correct byte-for-byte
+against the known-good `rdp_udp4.pcapng` (random ISN + correlation id +
+reversed cookie hash); only MTU/window/values differed. Reboot did not help.
+
+Root-caused 2026-10-08 by comparing against `windows-rdp.pcapng` (mstsc on a
+Windows laptop vs the same server, 1513 UDP frames of real traffic) and git
+archaeology. **Two pre-fork interop fixes were regressed by the 1.0.45 fork
+sync** (`e690322`); both restored verbatim from `b54f2e0`/`6696b6f`:
+
+1. **Stale v1 final ACK for v3 (the actual silence trigger).** The fork sent
+   the legacy final ACK unconditionally; v3 must skip it ([MS-RDPEUDP2]
+   1.3.1). Host capture proved it: our 20-byte ACK right after the SYN+ACK
+   (mstsc sends nothing there), then total server silence. Restored the
+   `if wire != WireFormat::V2` guard → **tunnel establishes, sub-second
+   connect, `reliable_udp=true`, Soft-Sync completes** (1.0.54).
+2. **V2 DataSeq base (restored, turned out not to be the trigger).**
+   `transition_to_established` derived the v2 DataSeqNum from ISN+1 again;
+   restored `WireFormat::V2 => (1u64, 1u64)` (1.0.52). Wire showed our
+   retransmit at DataSeq 5 / ChSeq 1 (fix active) with the server still
+   silent, so this was not the blocker — kept for spec correctness.
+
+Ruled out by probe builds: receive window 4096→64 (mstsc value, 1.0.53) made
+no difference — exonerated; still at 64, restore `max(12)` as a separate step
+if throughput wants it. ClientHello size/content (ours 217 B vs mstsc 413 B)
+never got to matter; servers don't go silent on smaller hellos.
+
+Also restored (was lost in the same sync): **8 s TLS cap** for
+non-interactive callers in `connect_udp` (1.0.50) — before it, a stalled
+sideband hung the whole connect 65 s, the server tore down TCP in the
+meantime (RST), and the fallback died deterministically ~1 ms after
+`MonitorLayout` with `[decode error]decode error`. Fast fallback fixed the
+black-screen/`Connected`-never-fires symptom the same night.
 
 **Resume hints:** tshark is installed on the Windows host; SSH `alan-@192.168.1.97`
-works with key auth. Compare the client SYN byte-for-byte against a known-good
-build (captures `rdp_udp4.pcapng` = 1.0.42, `rdp_udp5.pcapng` = 1.0.44). Fork
-clone is at `/tmp/opencode/ironrdp-winrdp`. When the sideband did establish
-(1.0.44) one session ran ~100 s; the fork's per-second `session perf` log is now
-present and is the quickest way to read transport/fps.
+works with key auth (`& 'C:\Program Files\Wireshark\tshark.exe'`, interface
+`Ethernet`). Phone is on wireless adb already paired (`adb-RFCX70N0F6X`).
+Engine log: `/sdcard/Android/data/com.dexrdp/files/logs/freerdp.log`
+(`adb pull` it; contains Kotlin crumbs + Rust tracing). Target host is
+.97 (a .98 exists on the LAN — red herring, connection refused).
+`session perf` log line (transport/fps/kbps/udp_bytes) is the quickest
+health read; note `fps`/`frames_total` read 0 on the legacy Image path even
+while frames display — do not trust them there, use feel + kbps.
+`ironrdp-rdpeudp` unit tests do NOT compile (128 pre-existing `Vec in scope`
+errors in test cfgs, present without our changes); lib `cargo check`, NDK
+release builds, and on-device sessions are the working verification.
+
+**Performance status (1.0.55, EGFX re-enabled):** UDP tunnel is up but
+graphics rode TCP while EGFX was off (legacy bitmaps can't soft-sync; UDP
+carried ~150 B/s of DVC control). FreeRDP-on-TCP still visibly smoother than
+IronRDP-on-TCP at both 1080p and 4K (user A/B). Prime suspect: our
+`ClientConfirmActive` advertises ~zero caches (bitmap/glyph/order all empty,
+offscreen off) so Windows resends full bitmaps every move — check phone log
+`Send ClientConfirmActive` vs FreeRDP's caps. Next: video A/B with graphics
+on UDP (`udp_bytes` should go to MBs), then caches, then present-path pacing.
+Latest: 1.0.55. Unpushed at time of writing: the three source files below.
 
 **Performance caveat:** even with the tunnel up, EGFX (RFX-progressive) at 4K is
 heavy; the legacy fast-path path (EGFX off) is much lighter. EGFX-over-UDP may not

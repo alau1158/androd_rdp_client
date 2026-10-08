@@ -319,6 +319,7 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeConnect(
                         );
                     }
                     RdpOutputEvent::ConnectionFailure(err) => {
+                        tracing::error!(%err, "connection failure");
                         report_failure(&mut env, callback_for_thread.as_obj(), &format!("{err}"));
                     }
                     RdpOutputEvent::Terminated(result) => {

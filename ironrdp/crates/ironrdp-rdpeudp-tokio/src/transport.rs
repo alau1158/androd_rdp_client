@@ -435,10 +435,10 @@ pub async fn connect_udp(config: UdpTransportConfig) -> Result<UdpTransport, Udp
         connection_config.correlation_id = Some(random_correlation_id());
     }
     connection_config.cookie_hash = Some(cookie_hash(&config.tunnel_config));
-    // The 2^6 default receive window caps how much the peer keeps in flight and
-    // throttles the graphics sideband. Advertise at least 2^12 so the server can
-    // pipeline more of the screen without stalling on our acknowledgements.
-    connection_config.log_window_size = connection_config.log_window_size.max(12);
+    // PROBE (mstsc parity): mstsc advertises rcv window 64 (log2 6) in both
+    // SYN and data packets; we advertise 4096 (log2 12). Temporary override
+    // to test whether Windows' UDP stack ignores flows with large windows.
+    connection_config.log_window_size = 6;
     // WinRDP: IRONRDP_UDP_OFFER=1|2|3 overrides the offered RDP-UDP version, so the
     // launcher can pick it without a client configuration option.
     if let Some(offer) = std::env::var("IRONRDP_UDP_OFFER")
@@ -486,10 +486,22 @@ pub async fn connect_udp(config: UdpTransportConfig) -> Result<UdpTransport, Udp
 
     tracing::debug!("RDPEUDP2 handshake complete, starting TLS");
 
+    // The 130 s default exists only to leave room for an interactive
+    // certificate decision. Without a validation callback there is nothing to
+    // wait for, and a server that silently ignores the TLS ClientHello would
+    // otherwise hang the whole connection for two minutes before the caller
+    // can fall back to TCP. Bound the non-interactive case so a stalled
+    // sideband fails fast.
+    let tls_timeout = if config.tls.certificate_validation_callback.is_some() {
+        config.tls_timeout
+    } else {
+        config.tls_timeout.min(Duration::from_secs(8))
+    };
+
     // Phase 3: TLS handshake over the RDPEUDP2 stream
     let rdpeudp_stream = RdpeudpStream::new(Arc::clone(&shared));
     let tls_stream = tokio::time::timeout(
-        config.tls_timeout,
+        tls_timeout,
         tls_upgrade(
             rdpeudp_stream,
             &config.server_name,
