@@ -5,7 +5,6 @@
 
 mod clipboard;
 pub mod daemon;
-pub mod known_certificates;
 pub mod logbuf;
 pub mod now;
 pub mod operations;

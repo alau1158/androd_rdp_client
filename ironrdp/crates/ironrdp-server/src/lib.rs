@@ -18,7 +18,6 @@ mod handler;
 pub mod heartbeat;
 #[cfg(feature = "helper")]
 mod helper;
-mod multitransport;
 mod rdpdr;
 mod rdpeai;
 mod rdpei;

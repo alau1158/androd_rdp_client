@@ -13,7 +13,6 @@ use std::io;
 
 use bytes::BytesMut;
 use ironrdp_async::{FramedRead, FramedWrite};
-use tracing::trace;
 
 use crate::transport::UdpTransport;
 
@@ -38,10 +37,7 @@ impl FramedRead for UdpTransport {
             // payload of nothing to pass on.
             loop {
                 match self.recv().await {
-                    Some(data) if data.is_empty() => {
-                        trace!("Skipped empty tunnel message");
-                        continue;
-                    }
+                    Some(data) if data.is_empty() => continue,
                     Some(data) => {
                         let n = data.len();
                         buf.extend_from_slice(&data);
@@ -76,9 +72,13 @@ mod tests {
     use super::*;
 
     /// Build a `UdpTransport` backed by test channels (no real network).
-    fn test_transport() -> (UdpTransport, mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) {
+    fn test_transport() -> (
+        UdpTransport,
+        mpsc::Sender<Vec<u8>>,
+        mpsc::Receiver<crate::tunnel::Outgoing>,
+    ) {
         let (incoming_tx, incoming_rx) = mpsc::channel::<Vec<u8>>(16);
-        let (outgoing_tx, outgoing_rx) = mpsc::channel::<Vec<u8>>(16);
+        let (outgoing_tx, outgoing_rx) = mpsc::channel::<crate::tunnel::Outgoing>(16);
 
         let transport = UdpTransport::from_channels(incoming_rx, outgoing_tx);
 
@@ -154,7 +154,7 @@ mod tests {
             .unwrap();
 
         let data = receiver.recv().await.unwrap();
-        assert_eq!(data, vec![0x01, 0x02, 0x03]);
+        assert_eq!(data, crate::tunnel::Outgoing::Data(vec![0x01, 0x02, 0x03]));
     }
 
     #[tokio::test]

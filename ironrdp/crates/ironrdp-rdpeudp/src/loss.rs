@@ -20,8 +20,6 @@ use crate::time::MonotonicInstant;
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use tracing::trace;
-
 use crate::send_window::SendWindow;
 
 /// Default reordering threshold: a packet is lost if at least this many
@@ -89,10 +87,6 @@ impl LossDetector {
             let time_lost = now.duration_since(entry.sent_at) > time_thresh;
 
             if reorder_lost || time_lost {
-                trace!(
-                    data_seq = entry.data_seq,
-                    reorder_lost, time_lost, highest_acked, "Packet meets loss criteria"
-                );
                 lost_seqs.push(entry.data_seq);
             }
         }
@@ -113,12 +107,6 @@ impl LossDetector {
 
         // Sort for deterministic ordering.
         lost_seqs.sort_unstable();
-        trace!(
-            highest_lost,
-            lost_count = lost_seqs.len(),
-            rto_ms = rto.as_millis(),
-            "Detected lost packets"
-        );
         lost_seqs
     }
 }

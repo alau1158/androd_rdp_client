@@ -11,6 +11,9 @@ use ironrdp_propertyset::PropertySet;
 use ironrdp_rail::pdu::ExecutePdu;
 use url::Url;
 
+/// RDP-UDP protocol version, as offered with [`ConfigBuilder::with_udp_offer_version`].
+#[cfg(feature = "udp")]
+pub use ironrdp_rdpeudp::pdu::UdpVersion;
 #[cfg(feature = "vmconnect")]
 pub use ironrdp_vmconnect::Mode as VmConnectMode;
 
@@ -93,6 +96,8 @@ pub struct Config {
     pub(crate) transport: Transport,
     #[cfg(feature = "udp")]
     pub(crate) udp_transport_enabled: bool,
+    #[cfg(feature = "udp")]
+    pub(crate) udp_offer_version: UdpVersion,
     pub(crate) certificate_validation: ironrdp_tls::CertificateValidation,
     pub(crate) certificate_validation_callback: Option<ironrdp_tls::CertificateValidationCallback>,
 
@@ -162,6 +167,12 @@ impl Config {
     #[cfg(feature = "udp")]
     pub fn udp_transport_enabled(&self) -> bool {
         self.udp_transport_enabled
+    }
+
+    /// Highest RDP-UDP protocol version offered in the SYN of the UDP handshake.
+    #[cfg(feature = "udp")]
+    pub fn udp_offer_version(&self) -> UdpVersion {
+        self.udp_offer_version
     }
 
     /// TLS peer-certificate validation policy.
@@ -273,6 +284,8 @@ impl fmt::Debug for Config {
         s.field("transport", &self.transport);
         #[cfg(feature = "udp")]
         s.field("udp_transport_enabled", &self.udp_transport_enabled);
+        #[cfg(feature = "udp")]
+        s.field("udp_offer_version", &self.udp_offer_version);
         s.field("certificate_validation", &self.certificate_validation);
         s.field(
             "certificate_validation_callback",
@@ -785,6 +798,9 @@ pub struct ConfigBuilder {
     transport: TransportKind,
     #[cfg(feature = "udp")]
     udp_transport_enabled: bool,
+    #[cfg(feature = "udp")]
+    udp_offer_version: Option<UdpVersion>,
+    graphics_pipeline: bool,
     #[cfg(feature = "vmconnect")]
     vm_id: Option<String>,
     #[cfg(feature = "vmconnect")]
@@ -1292,6 +1308,30 @@ impl ConfigBuilder {
         self
     }
 
+    /// Selects the highest RDP-UDP protocol version the UDP handshake offers.
+    ///
+    /// The default, [`UdpVersion::V3`], offers MS-RDPEUDP2 and lets the server settle on a
+    /// lower version. Offering [`UdpVersion::V2`] or [`UdpVersion::V1`] asks for MS-RDPEUDP
+    /// outright, which is what Windows servers that do not implement version 3 answer.
+    #[cfg(feature = "udp")]
+    #[must_use]
+    pub fn with_udp_offer_version(mut self, version: UdpVersion) -> Self {
+        self.udp_offer_version = Some(version);
+        self
+    }
+
+    /// Advertises the graphics pipeline ([MS-RDPEGFX]) to the server. Off by default.
+    ///
+    /// Without it, the server keeps graphics on the legacy bitmap path, which travels on the
+    /// main connection and cannot move to a reliable UDP tunnel.
+    ///
+    /// [MS-RDPEGFX]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpegfx/
+    #[must_use]
+    pub fn with_graphics_pipeline(mut self, enabled: bool) -> Self {
+        self.graphics_pipeline = enabled;
+        self
+    }
+
     /// Connect to a Hyper-V VM console by VM GUID. Destination must use port
     /// [`ironrdp_vmconnect::PORT`] (2179) unless the caller explicitly selects another port.
     /// A destination with no explicit port defaults to 2179 instead of the ordinary RDP port.
@@ -1669,6 +1709,7 @@ impl ConfigBuilder {
     #[cfg_attr(not(any(feature = "vmconnect", feature = "gateway")), expect(unused_mut))]
     pub fn build(mut self) -> anyhow::Result<Config> {
         use ironrdp_pdu::rdp::capability_sets::client_codecs_capabilities;
+        use ironrdp_pdu::rdp::client_info::TimezoneInfo;
 
         if let Some(load_balance_info) = &self.load_balance_info {
             anyhow::ensure!(
@@ -1957,7 +1998,7 @@ impl ConfigBuilder {
             request_data: None,
             pointer_software_rendering: self.pointer_software_rendering.unwrap_or(false),
             multitransport_flags: None,
-            support_dyn_vc_gfx_protocol: false,
+            support_dyn_vc_gfx_protocol: self.graphics_pipeline,
             compression_type,
             performance_flags: self.performance_flags.unwrap_or_default(),
             timezone_info: self.timezone_info.unwrap_or_default(),
@@ -1992,6 +2033,8 @@ impl ConfigBuilder {
             transport,
             #[cfg(feature = "udp")]
             udp_transport_enabled: self.udp_transport_enabled,
+            #[cfg(feature = "udp")]
+            udp_offer_version: self.udp_offer_version.unwrap_or(UdpVersion::V3),
             certificate_validation,
             certificate_validation_callback: self.certificate_validation_callback,
             #[cfg(feature = "vmconnect")]

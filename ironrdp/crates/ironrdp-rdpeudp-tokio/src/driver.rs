@@ -20,7 +20,6 @@ use ironrdp_rdpeudp::pdu::{V1Datagram, V1Flags};
 use ironrdp_rdpeudp::{Event, RdpeudpConnection, RdpeudpError, RdpeudpErrorKind, SendError};
 use tokio::net::UdpSocket;
 use tokio::sync::Notify;
-use tracing::{debug, info, trace};
 
 use crate::error::{DriverError, DriverErrorExt as _, DriverErrorKind};
 use crate::stream::SharedIo;
@@ -50,6 +49,7 @@ const READ_BUF_HIGH_WATER: usize = 1 << 20;
 
 /// The driver task's internal state.
 pub(crate) struct Driver {
+    tx_logged: u32,
     socket: UdpSocket,
     conn: RdpeudpConnection,
     shared: Arc<Mutex<SharedIo>>,
@@ -66,9 +66,6 @@ pub(crate) struct Driver {
     /// dropped or treated as a fatal error.
     pending_write: Option<Vec<u8>>,
     stream_released: bool,
-    /// Count of data datagrams logged so far; the log is bounded so a busy
-    /// session cannot bury the interesting early packets.
-    data_send_logs: u8,
 }
 
 impl Driver {
@@ -79,6 +76,7 @@ impl Driver {
         connected_notify: Arc<Notify>,
     ) -> Self {
         Self {
+            tx_logged: 0,
             socket,
             conn,
             shared,
@@ -88,26 +86,12 @@ impl Driver {
             clock: Clock::new(),
             pending_write: None,
             stream_released: false,
-            data_send_logs: 0,
         }
     }
 
     /// Run the driver event loop until the connection closes or errors.
     pub(crate) async fn run(mut self) -> Result<(), DriverError> {
-        debug!(
-            local_addr = ?self.socket.local_addr().ok(),
-            peer = ?self.socket.peer_addr().ok(),
-            "UDP driver started"
-        );
-
         let result = self.run_to_completion().await;
-
-        match (&result, self.connected_signaled) {
-            (Ok(()), true) => info!("RDP-UDP connection closed"),
-            (Err(error), true) => info!(%error, "RDP-UDP connection closed on error"),
-            (Ok(()), false) => debug!("UDP driver stopped before the handshake completed"),
-            (Err(error), false) => debug!(%error, "UDP driver failed before the handshake completed"),
-        }
 
         // However this ended, the stream side has to hear about it. A reader
         // parked in `poll_read` has left its waker here and nothing else will
@@ -142,6 +126,8 @@ impl Driver {
     async fn run_to_completion(&mut self) -> Result<(), DriverError> {
         // Send any initial transmits (the SYN packet for client-side connections)
         self.drain_transmits().await?;
+        let mut stats_tick = tokio::time::interval(core::time::Duration::from_secs(1));
+        let mut rx_logged = 0u32;
 
         loop {
             let timeout = self
@@ -152,9 +138,6 @@ impl Driver {
             // Reading a datagram may append to `read_buf`, so stop reading while
             // it is over its mark and wait for the consumer instead.
             let has_room = self.read_buf_has_room();
-            if !has_room {
-                trace!("Read buffer over its high-water mark, pausing socket reads");
-            }
 
             // Not `biased`: branches 1-3 can all be genuinely ready at once
             // (incoming data, a queued TLS write, and an expired timer), and
@@ -165,15 +148,18 @@ impl Driver {
             // guards, so fairness between them is moot either way.
             tokio::select! {
                 // Branch 0: the consumer caught up, so go round again and read.
-                _ = ReadBufDrained::new(&self.shared), if !has_room => {
-                    trace!("Read buffer drained, resuming socket reads");
-                }
+                _ = ReadBufDrained::new(&self.shared), if !has_room => {}
 
                 // Branch 1: Incoming UDP datagram (highest priority)
                 result = self.socket.recv(&mut self.recv_buf), if has_room => {
                     let n = result.map_err(|error| DriverError::socket("receive datagram", error))?;
-                    debug!(len = n, "Received UDP datagram");
                     let now = self.clock.now();
+                    if !self.conn.is_established() {
+                        tracing::trace!(len = n, head = %hex_head(&self.recv_buf[..n]), "Received a handshake datagram");
+                    } else if rx_logged < 8 {
+                        rx_logged += 1;
+                        tracing::trace!(len = n, head = %hex_head(&self.recv_buf[..n]), "Received a datagram");
+                    }
 
                     // handle_datagram takes &mut [u8] for in-place prefix byte swap
                     match self.conn.handle_datagram(&mut self.recv_buf[..n], now) {
@@ -187,7 +173,7 @@ impl Driver {
                         // carry on; a genuinely dead connection still closes
                         // on the idle timeout.
                         Err(error) if is_droppable(&error) => {
-                            debug!(%error, len = n, "Dropped unusable datagram");
+                            tracing::debug!(%error, "dropping an unusable datagram");
                         }
 
                         Err(error) => return Err(DriverError::rdpeudp("handle datagram", error)),
@@ -221,29 +207,26 @@ impl Driver {
                         waker.wake();
                     }
                     if stream_closed {
-                        debug!("Stream closed locally, closing RDP-UDP connection");
                         self.conn.close();
                         self.drain_events();
                         return Ok(());
                     }
-                    if !data.is_empty() {
-                        trace!(len = data.len(), "Took outbound data from the write buffer");
-                        if self.queue_write(data)? {
-                            self.drain_transmits().await?;
-                        }
+                    if !data.is_empty() && self.queue_write(data)? {
+                        self.drain_transmits().await?;
                     }
                 }
 
                 // Branch 3: Timer expiry
                 _ = optional_sleep(timeout) => {
-                    trace!("Connection timer fired");
                     let now = self.clock.now();
                     self.conn.handle_timeout(now);
-                    if self.conn.is_closed() {
-                        debug!("RDP-UDP connection closed by timeout");
-                    }
                     self.drain_transmits().await?;
                     self.drain_events();
+                }
+                _ = stats_tick.tick() => {
+                    if let Some(stats) = self.conn.v1_stats() {
+                        tracing::trace!(?stats, "RDP-UDP version 1/2 connection statistics");
+                    }
                 }
             }
 
@@ -285,22 +268,21 @@ impl Driver {
             // established (only prefix-framed V2 packets), so there is
             // nothing to check on the data path.
             let bytes = if self.conn.is_established() {
-                if self.data_send_logs < 12 {
-                    self.data_send_logs += 1;
-                    debug!(len = transmit.contents.len(), head = %hex_head(&transmit.contents, 10), "Sending data datagram");
-                }
                 transmit.contents
             } else {
-                let bytes = pad_handshake_datagram(transmit.contents);
-                debug!(len = bytes.len(), head = %hex_head(&bytes, 64), "Sending handshake datagram");
-                bytes
+                pad_handshake_datagram(transmit.contents)
             };
+            if !self.conn.is_established() {
+                tracing::trace!(len = bytes.len(), head = %hex_head(&bytes), "Sending a handshake datagram");
+            } else if self.tx_logged < 8 {
+                self.tx_logged += 1;
+                tracing::trace!(len = bytes.len(), head = %hex_head(&bytes), "Sending a datagram");
+            }
 
             self.socket
                 .send(&bytes)
                 .await
                 .map_err(|error| DriverError::socket("send datagram", error))?;
-            trace!(len = bytes.len(), "Sent datagram");
         }
         Ok(())
     }
@@ -320,7 +302,6 @@ impl Driver {
         match self.conn.send(data) {
             Ok(()) => Ok(true),
             Err(SendError { error, data }) if matches!(error.kind(), RdpeudpErrorKind::SendBufferFull) => {
-                trace!(len = data.len(), "Send buffer full, holding write for retry");
                 self.pending_write = Some(data);
                 Ok(false)
             }
@@ -342,7 +323,6 @@ impl Driver {
             return Ok(());
         };
 
-        trace!(len = data.len(), "Retrying held write");
         if self.queue_write(data)? {
             self.drain_transmits().await?;
         }
@@ -356,13 +336,16 @@ impl Driver {
             match event {
                 Event::Connected => {
                     if !self.connected_signaled {
-                        debug!("RDP-UDP handshake complete");
                         self.connected_signaled = true;
+                        let version = self.conn.negotiated_version();
+                        if let Ok(mut shared) = self.shared.lock() {
+                            shared.negotiated_version = version;
+                        }
+                        tracing::info!(?version, "RDP-UDP handshake complete");
                         self.connected_notify.notify_one();
                     }
                 }
                 Event::DataReceived(data) => {
-                    trace!(len = data.len(), "Delivered received data to the stream");
                     if let Ok(mut shared) = self.shared.lock() {
                         shared.read_buf.extend_from_slice(&data);
                         if let Some(waker) = shared.read_waker.take() {
@@ -371,7 +354,6 @@ impl Driver {
                     }
                 }
                 Event::ConnectionClosed => {
-                    debug!("RDP-UDP connection reported closed");
                     if let Ok(mut shared) = self.shared.lock() {
                         shared.close();
                     }
@@ -387,7 +369,6 @@ impl Drop for Driver {
             return;
         }
 
-        debug!("UDP driver dropped without finishing, aborting the stream");
         if let Ok(mut shared) = self.shared.lock() {
             shared.error.get_or_insert(io::ErrorKind::ConnectionAborted);
             shared.close();
@@ -501,19 +482,6 @@ fn pad_handshake_datagram(mut bytes: Vec<u8>) -> Vec<u8> {
     bytes
 }
 
-/// Lowercase hex of the first `limit` bytes, for comparing a SYNs fields against
-/// a known-good capture in the log.
-fn hex_head(bytes: &[u8], limit: usize) -> String {
-    use core::fmt::Write as _;
-
-    let n = bytes.len().min(limit);
-    let mut out = String::with_capacity(n * 2);
-    for byte in &bytes[..n] {
-        let _ = write!(out, "{byte:02x}");
-    }
-    out
-}
-
 /// Whether a datagram that the state machine rejected can simply be dropped.
 ///
 /// Anything the peer could put on the wire, deliberately or by accident, is
@@ -528,6 +496,16 @@ fn is_droppable(error: &RdpeudpError) -> bool {
             | RdpeudpErrorKind::InvalidPacket { .. }
             | RdpeudpErrorKind::InvalidState
     )
+}
+
+/// The first 48 bytes of a datagram in hex, for trace-level diagnostics.
+fn hex_head(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .take(48)
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]

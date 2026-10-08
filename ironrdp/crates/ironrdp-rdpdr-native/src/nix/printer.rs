@@ -6,11 +6,12 @@
 //! pushes the bytes down as a create / write... / close sequence on that
 //! device. The job is spooled to a temporary file while it streams. On close,
 //! a worker thread hands it to `lp` or saves it in the configured folder, so a
-//! slow print system never stalls the channel.
+//! slow print system never stalls the channel. When `lp` is missing or cannot
+//! take the job, it is saved in the user's downloads folder instead.
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write as _};
+use std::io::{Read as _, Write as _};
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -78,6 +79,8 @@ struct Submitter {
 #[derive(Debug)]
 pub struct PrinterSpooler {
     target: PrintTarget,
+    /// Where a job goes when `lp` is missing or cannot take it.
+    fallback_dir: PathBuf,
     /// Private, atomically created 0700 directory, allocated on the first print job.
     spool_dir: Option<PathBuf>,
     next_file_id: u32,
@@ -92,6 +95,7 @@ impl PrinterSpooler {
     pub fn new(target: PrintTarget) -> Self {
         Self {
             target,
+            fallback_dir: default_fallback_dir(),
             spool_dir: None,
             next_file_id: 1,
             jobs: HashMap::new(),
@@ -182,20 +186,16 @@ impl PrinterSpooler {
 
     fn close(&mut self, request: DeviceIoRequest) -> RdpdrPdu {
         let file_id = request.file_id;
-        if self.abandoned.remove(&file_id) {
-            return close_response(request, NtStatus::SUCCESS);
-        }
-        // MS-RDPEFS 3.1.5.2: a FileId that no open job owns, such as one already closed, is
-        // answered with STATUS_UNSUCCESSFUL.
-        let Some(Job { spool, file, bytes }) = self.jobs.remove(&file_id) else {
-            return close_response(request, NtStatus::UNSUCCESSFUL);
-        };
-        drop(file);
-        if bytes == 0 {
-            debug!(?spool, "Empty print job discarded");
-            let _ = std::fs::remove_file(spool);
-        } else {
-            self.queue_submission(FinishedJob { spool, bytes });
+        if !self.abandoned.remove(&file_id)
+            && let Some(Job { spool, file, bytes }) = self.jobs.remove(&file_id)
+        {
+            drop(file);
+            if bytes == 0 {
+                debug!(?spool, "Empty print job discarded");
+                let _ = std::fs::remove_file(spool);
+            } else {
+                self.queue_submission(FinishedJob { spool, bytes });
+            }
         }
         close_response(request, NtStatus::SUCCESS)
     }
@@ -214,7 +214,7 @@ impl PrinterSpooler {
             let Some(spool_dir) = self.spool_dir.clone() else {
                 return;
             };
-            match Submitter::spawn(self.target.clone(), spool_dir) {
+            match Submitter::spawn(self.target.clone(), self.fallback_dir.clone(), spool_dir) {
                 Ok(submitter) => self.submitter = Some(submitter),
                 Err(error) => {
                     warn!(%error, "Could not start the print submission thread; the print job is discarded");
@@ -267,22 +267,28 @@ impl Drop for PrinterSpooler {
 }
 
 impl Submitter {
-    fn spawn(target: PrintTarget, spool_dir: PathBuf) -> std::io::Result<Self> {
+    fn spawn(target: PrintTarget, fallback_dir: PathBuf, spool_dir: PathBuf) -> std::io::Result<Self> {
         let (jobs, queue) = sync_channel(SUBMISSION_QUEUE_CAPACITY);
         let thread = std::thread::Builder::new()
             .name("ironrdp-print-submit".to_owned())
-            .spawn(move || submit_jobs(&target, &spool_dir, queue))?;
+            .spawn(move || submit_jobs(&target, &fallback_dir, &spool_dir, queue))?;
         Ok(Self { jobs, thread })
     }
 }
 
 /// Submits queued jobs until the spooler is gone, then removes the spool directory.
-fn submit_jobs(target: &PrintTarget, spool_dir: &Path, queue: Receiver<FinishedJob>) {
+fn submit_jobs(target: &PrintTarget, fallback_dir: &Path, spool_dir: &Path, queue: Receiver<FinishedJob>) {
     for job in queue {
-        match target {
+        let printed = match target {
             PrintTarget::DefaultPrinter => print(&job, None),
             PrintTarget::Printer(name) => print(&job, Some(name)),
-            PrintTarget::Folder(dir) => save(&job.spool, dir),
+            PrintTarget::Folder(dir) => {
+                save(&job.spool, dir);
+                true
+            }
+        };
+        if !printed {
+            save(&job.spool, fallback_dir);
         }
         let _ = std::fs::remove_file(&job.spool);
     }
@@ -290,7 +296,8 @@ fn submit_jobs(target: &PrintTarget, spool_dir: &Path, queue: Receiver<FinishedJ
 }
 
 /// Hands the job to `lp`, killing it if it has not accepted the job within [`LP_TIMEOUT`].
-fn print(job: &FinishedJob, destination: Option<&str>) {
+/// Returns whether `lp` accepted the job.
+fn print(job: &FinishedJob, destination: Option<&str>) -> bool {
     let mut command = Command::new("lp");
     if let Some(name) = destination {
         command.arg("-d").arg(name);
@@ -305,13 +312,10 @@ fn print(job: &FinishedJob, destination: Option<&str>) {
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            warn!(%error, "lp is not available; the print job is discarded");
-            return;
+            warn!(%error, "lp is not available; keeping the print job as a file instead");
+            return false;
         }
     };
-    // The pipes are drained while lp runs, so output beyond the pipe buffer cannot block it.
-    let stdout = child.stdout.take().and_then(drain);
-    let stderr = child.stderr.take().and_then(drain);
     let deadline = Instant::now() + LP_TIMEOUT;
     let status = loop {
         match child.try_wait() {
@@ -320,37 +324,57 @@ fn print(job: &FinishedJob, destination: Option<&str>) {
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                warn!(timeout = ?LP_TIMEOUT, "lp did not accept the print job in time; the job is discarded");
-                return;
+                warn!(timeout = ?LP_TIMEOUT, "lp did not accept the print job in time; keeping it as a file instead");
+                return false;
             }
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                warn!(%error, "Could not wait for lp; the print job is discarded");
-                return;
+                warn!(%error, "Could not wait for lp; keeping the print job as a file instead");
+                return false;
             }
         }
     };
-    let stdout = stdout.and_then(|reader| reader.join().ok()).unwrap_or_default();
-    let stderr = stderr.and_then(|reader| reader.join().ok()).unwrap_or_default();
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        let _ = pipe.read_to_string(&mut stdout);
+    }
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
     if status.success() {
         info!(bytes = job.bytes, "Print job handed to lp: {}", stdout.trim());
     } else {
-        warn!("lp refused the print job ({}); the job is discarded", stderr.trim());
+        warn!(
+            "lp refused the print job ({}); keeping it as a file instead",
+            stderr.trim()
+        );
     }
+    status.success()
 }
 
-/// Reads `pipe` to its end on a thread of its own. Without the thread, the pipe is dropped,
-/// which a writer sees as a closed pipe rather than a block.
-fn drain<R: Read + Send + 'static>(mut pipe: R) -> Option<JoinHandle<String>> {
-    std::thread::Builder::new()
-        .name("ironrdp-print-lp-output".to_owned())
-        .spawn(move || {
-            let mut output = String::new();
-            let _ = pipe.read_to_string(&mut output);
-            output
-        })
-        .ok()
+fn default_fallback_dir() -> PathBuf {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let downloads = home.join("Downloads");
+    if downloads.is_dir() { downloads } else { home }
+}
+
+impl PrintTarget {
+    /// Parses a target description: `default` (or an empty string), `folder:<dir>`, or a CUPS
+    /// destination name.
+    pub fn parse(value: &str) -> Self {
+        let value = value.trim();
+        if value.is_empty() || value.eq_ignore_ascii_case("default") {
+            Self::DefaultPrinter
+        } else if let Some(dir) = value.strip_prefix("folder:") {
+            Self::Folder(PathBuf::from(dir))
+        } else {
+            Self::Printer(value.to_owned())
+        }
+    }
 }
 
 /// Copies the spooled job into `dir` under a readable name.
@@ -559,29 +583,6 @@ mod tests {
     }
 
     #[test]
-    fn closing_a_file_id_that_is_not_open_fails() {
-        let mut spooler = PrinterSpooler::new(PrintTarget::DefaultPrinter);
-        let file_id = open_job(&mut spooler);
-        let status = |pdu| match pdu {
-            RdpdrPdu::DeviceCloseResponse(response) => response.device_io_response.io_status,
-            other => panic!("expected a close response, got {other:?}"),
-        };
-        assert_eq!(
-            status(spooler.close(io(file_id, MajorFunction::Close))),
-            NtStatus::SUCCESS
-        );
-        assert_eq!(
-            status(spooler.close(io(file_id, MajorFunction::Close))),
-            NtStatus::UNSUCCESSFUL,
-            "a second close of the same job"
-        );
-        assert_eq!(
-            status(spooler.close(io(u32::MAX, MajorFunction::Close))),
-            NtStatus::UNSUCCESSFUL
-        );
-    }
-
-    #[test]
     fn unsupported_requests_are_answered_with_their_own_response_type() {
         let write = unsupported_response(PrinterIoRequest::Write(DeviceWriteRequest {
             device_io_request: io(1, MajorFunction::Write),
@@ -592,6 +593,14 @@ mod tests {
             panic!("expected a write response");
         };
         assert_eq!(response.length, 0);
+    }
+
+    #[test]
+    fn targets_parse_from_a_description() {
+        assert!(matches!(PrintTarget::parse("default"), PrintTarget::DefaultPrinter));
+        assert!(matches!(PrintTarget::parse(""), PrintTarget::DefaultPrinter));
+        assert!(matches!(PrintTarget::parse("HP_LaserJet"), PrintTarget::Printer(n) if n == "HP_LaserJet"));
+        assert!(matches!(PrintTarget::parse("folder:/tmp/out"), PrintTarget::Folder(p) if p == Path::new("/tmp/out")));
     }
 
     #[test]

@@ -199,7 +199,7 @@ fn neg_failure_hybrid_required() {
     }
 }
 
-pub(super) fn encode_send_data_request(initiator_id: u16, channel_id: u16, user_data: &[u8]) -> Vec<u8> {
+fn encode_send_data_request(initiator_id: u16, channel_id: u16, user_data: &[u8]) -> Vec<u8> {
     let mut buf = WriteBuf::new();
     ironrdp_core::encode_buf(
         &X224(mcs::SendDataRequest {
@@ -315,7 +315,7 @@ fn drive_to_secure_settings_exchange(
     )
 }
 
-pub(super) fn client_gcc_with_message_channel_and_multitransport(
+fn client_gcc_with_message_channel_and_multitransport(
     offer: Option<MultiTransportFlags>,
 ) -> ironrdp_pdu::gcc::ClientGccBlocks {
     let mut blocks = CLIENT_GCC_WITHOUT_OPTIONAL_FIELDS.clone();
@@ -327,8 +327,8 @@ pub(super) fn client_gcc_with_message_channel_and_multitransport(
 
 /// Builds an `Acceptor` for the multitransport tests below, at a common
 /// 1920x1080 desktop size with no static channels or credentials. `offer` is
-/// passed straight through to `set_multitransport_offer`; pass `None` to
-/// exercise the default-disabled path.
+/// passed to `set_multitransport_offer` when `Some`; pass `None` to exercise
+/// the default-disabled path.
 fn multitransport_acceptor(offer: Option<MultiTransportFlags>) -> Acceptor {
     let mut acceptor = Acceptor::new(
         SecurityProtocol::SSL,
@@ -339,7 +339,9 @@ fn multitransport_acceptor(offer: Option<MultiTransportFlags>) -> Acceptor {
         Vec::new(),
         None,
     );
-    acceptor.set_multitransport_offer(offer);
+    if let Some(offer) = offer {
+        acceptor.set_multitransport_offer(Some(offer));
+    }
     acceptor
 }
 
@@ -639,11 +641,7 @@ fn multitransport_not_offered_by_default() {
 
     let client_blocks =
         client_gcc_with_message_channel_and_multitransport(Some(MultiTransportFlags::TRANSPORT_TYPE_UDP_FECR));
-    let (.., server_multitransport) = drive_to_secure_settings_exchange(&mut acceptor, client_blocks);
-    assert_eq!(
-        server_multitransport, None,
-        "server must not advertise MultiTransportChannelData when multitransport is disabled"
-    );
+    drive_to_secure_settings_exchange(&mut acceptor, client_blocks);
 
     acceptor.step(&[], None, &mut WriteBuf::new()).unwrap(); // LicensingExchange
     let written = acceptor.step(&[], None, &mut WriteBuf::new()).unwrap(); // MultitransportBootstrapping

@@ -34,7 +34,10 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback, PhysicalKeyboardRoute
     private var lastY = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val logFile = File(File(filesDir, "logs").apply { mkdirs() }, "freerdp.log")
+        // Diagnostic build: write the engine log to app-specific external storage so
+        // the full (uncapped) file can be pulled with adb without a rooted device.
+        val logDir = (getExternalFilesDir("logs") ?: File(filesDir, "logs")).apply { mkdirs() }
+        val logFile = File(logDir, "freerdp.log")
         fun crumb(msg: String) = runCatching { logFile.appendText("engine: $msg\n") }
         crumb("onCreate entered")
 

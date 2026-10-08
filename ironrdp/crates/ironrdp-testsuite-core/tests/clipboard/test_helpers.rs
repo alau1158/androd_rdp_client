@@ -5,6 +5,13 @@
 //! convenience helpers for driving a [`CliprdrClient`] through the protocol
 //! handshake to the `Ready` state via the public API.
 
+// Items in this module are consumed by sibling test modules via
+// `super::test_helpers::*`; the compiler cannot see that usage chain and
+// warns about "unreachable pub items" on methods/fields inside
+// `pub(super)` structs. `dead_code` is suppressed because not all items
+// are used yet during the incremental migration from lib.rs inline tests.
+#![allow(unreachable_pub, dead_code)]
+
 use core::cell::Cell;
 use std::sync::{Arc, Mutex};
 
@@ -22,7 +29,7 @@ use ironrdp_svc::SvcProcessor as _;
 
 /// Returns monotonic milliseconds using a process-wide epoch, for test
 /// backends that don't need a controllable clock.
-pub fn real_now_ms() -> u64 {
+pub(super) fn real_now_ms() -> u64 {
     use std::sync::OnceLock;
     use std::time::Instant;
     static EPOCH: OnceLock<Instant> = OnceLock::new();
@@ -34,7 +41,7 @@ pub fn real_now_ms() -> u64 {
 /// Simplest possible backend: all callbacks are no-ops, no locking
 /// capability, uses real wall-clock time.
 #[derive(Debug)]
-pub struct TestBackend;
+pub(super) struct TestBackend;
 
 impl CliprdrBackend for TestBackend {
     fn temporary_directory(&self) -> &str {
@@ -77,14 +84,14 @@ impl AsAny for TestBackend {
 
 /// Backend that advertises `CAN_LOCK_CLIPDATA` and provides a mock
 /// clock via `Cell<u64>` for deterministic lock timeout tests.
-#[derive(Debug, Default)]
-pub struct LockingBackend {
+#[derive(Debug)]
+pub(super) struct LockingBackend {
     clock_ms: Cell<u64>,
 }
 
 impl LockingBackend {
     pub fn new() -> Self {
-        Self::default()
+        Self { clock_ms: Cell::new(0) }
     }
 
     /// Advance the mock clock by `ms` milliseconds.
@@ -134,7 +141,7 @@ impl AsAny for LockingBackend {
 
 /// Response recorded by [`RecordingBackend`] for assertion in tests.
 #[derive(Debug, Clone)]
-pub struct ReceivedResponse {
+pub(super) struct ReceivedResponse {
     pub stream_id: u32,
     pub is_error: bool,
     pub data_len: usize,
@@ -144,7 +151,7 @@ pub struct ReceivedResponse {
 /// assertion. Used by tests that verify response forwarding behavior
 /// (e.g. malformed size responses, error sanitization).
 #[derive(Debug)]
-pub struct RecordingBackend {
+pub(super) struct RecordingBackend {
     pub responses: Arc<Mutex<Vec<ReceivedResponse>>>,
 }
 
@@ -189,82 +196,13 @@ impl AsAny for RecordingBackend {
     }
 }
 
-// ── FormatDataRecordingBackend ──────────────────────────────────────
-
-/// Backend that records FormatDataResponse and remote file list callbacks,
-/// with a mock clock. Used to verify which request each response is
-/// correlated with.
-#[derive(Debug, Default)]
-pub struct FormatDataRecordingBackend {
-    pub clock_ms: Cell<u64>,
-    /// Payloads of successful FormatDataResponses forwarded to the backend.
-    pub data_responses: Vec<Vec<u8>>,
-    /// Error FormatDataResponses forwarded to the backend, real or synthetic.
-    pub error_responses: usize,
-    /// File lists delivered through `on_remote_file_list`.
-    pub file_lists: Vec<Vec<FileDescriptor>>,
-}
-
-impl FormatDataRecordingBackend {
-    /// Advance the mock clock by `ms` milliseconds.
-    pub fn advance_ms(&self, ms: u64) {
-        self.clock_ms.set(self.clock_ms.get() + ms);
-    }
-}
-
-impl CliprdrBackend for FormatDataRecordingBackend {
-    fn temporary_directory(&self) -> &str {
-        "/tmp"
-    }
-    fn client_capabilities(&self) -> ClipboardGeneralCapabilityFlags {
-        ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES
-            | ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED
-            | ClipboardGeneralCapabilityFlags::FILECLIP_NO_FILE_PATHS
-    }
-    fn on_ready(&mut self) {}
-    fn on_request_format_list(&mut self) {}
-    fn on_process_negotiated_capabilities(&mut self, _: ClipboardGeneralCapabilityFlags) {}
-    fn on_remote_copy(&mut self, _: &[ClipboardFormat]) {}
-    fn on_format_data_request(&mut self, _: FormatDataRequest) {}
-    fn on_format_data_response(&mut self, response: FormatDataResponse<'_>) {
-        if response.is_error() {
-            self.error_responses += 1;
-        } else {
-            self.data_responses.push(response.data().to_vec());
-        }
-    }
-    fn on_file_contents_request(&mut self, _: FileContentsRequest) {}
-    fn on_file_contents_response(&mut self, _: FileContentsResponse<'_>) {}
-    fn on_lock(&mut self, _: LockDataId) {}
-    fn on_unlock(&mut self, _: LockDataId) {}
-    fn on_remote_file_list(&mut self, files: &[FileDescriptor], _clip_data_id: Option<u32>) {
-        self.file_lists.push(files.to_vec());
-    }
-
-    fn now_ms(&self) -> u64 {
-        self.clock_ms.get()
-    }
-    fn elapsed_ms(&self, since: u64) -> u64 {
-        self.now_ms().saturating_sub(since)
-    }
-}
-
-impl AsAny for FormatDataRecordingBackend {
-    fn as_any(&self) -> &dyn core::any::Any {
-        self
-    }
-    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
-        self
-    }
-}
-
 // ── TimedRecordingBackend ───────────────────────────────────────────
 
 /// Backend combining mock clock, response recording, and unlock
 /// tracking. Used for tests that need deterministic time together with
 /// callback verification.
 #[derive(Debug)]
-pub struct TimedRecordingBackend {
+pub(super) struct TimedRecordingBackend {
     pub clock_ms: Cell<u64>,
     pub responses: Arc<Mutex<Vec<ReceivedResponse>>>,
     pub unlocks: Arc<Mutex<Vec<u32>>>,
@@ -334,7 +272,7 @@ impl AsAny for TimedRecordingBackend {
 /// `on_outgoing_locks_expired` callback invocations.
 /// Has a mock clock for deterministic lock timeout tests.
 #[derive(Debug)]
-pub struct CallbackTrackingBackend {
+pub(super) struct CallbackTrackingBackend {
     pub cleared_ids: Arc<Mutex<Vec<Vec<LockDataId>>>>,
     pub expired_ids: Arc<Mutex<Vec<Vec<LockDataId>>>>,
     pub clock_ms: Cell<u64>,
@@ -413,10 +351,10 @@ impl AsAny for CallbackTrackingBackend {
 
 // ── Initialization helpers ──────────────────────────────────────────
 
-/// The server capability flags sent in the simulated handshake
-/// ([`drive_to_ready`]). Tests that need to match against negotiated
+/// The capability flags used by [server_capabilities_pdu] in the
+/// simulated handshake. Tests that need to match against negotiated
 /// capabilities can reference this constant.
-pub const HANDSHAKE_SERVER_FLAGS: ClipboardGeneralCapabilityFlags =
+pub(super) const HANDSHAKE_SERVER_FLAGS: ClipboardGeneralCapabilityFlags =
     ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES
         .union(ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED)
         .union(ClipboardGeneralCapabilityFlags::FILECLIP_NO_FILE_PATHS)
@@ -449,11 +387,7 @@ fn format_list_response_ok_pdu() -> Vec<u8> {
 /// 2. Server sends MonitorReady
 /// 3. Client calls `initiate_copy` (sends Caps + TempDir + FormatList)
 /// 4. Server replies FormatListResponse::Ok -> client transitions to Ready
-///
-/// # Panics
-///
-/// Panics if the client rejects any step of the handshake.
-pub fn drive_to_ready(cliprdr: &mut CliprdrClient) {
+pub(super) fn drive_to_ready(cliprdr: &mut CliprdrClient) {
     let caps_bytes = server_capabilities_pdu();
     cliprdr.process(&caps_bytes).unwrap();
 
@@ -468,19 +402,19 @@ pub fn drive_to_ready(cliprdr: &mut CliprdrClient) {
 }
 
 /// Create a [`CliprdrClient`] with the given backend, driven to Ready state.
-pub fn init_ready_client_with_backend(backend: Box<dyn CliprdrBackend>) -> CliprdrClient {
+pub(super) fn init_ready_client_with_backend(backend: Box<dyn CliprdrBackend>) -> CliprdrClient {
     let mut cliprdr = CliprdrClient::new(backend);
     drive_to_ready(&mut cliprdr);
     cliprdr
 }
 
 /// Create a [`CliprdrClient`] with a [`TestBackend`], driven to Ready state.
-pub fn init_ready_client() -> CliprdrClient {
+pub(super) fn init_ready_client() -> CliprdrClient {
     init_ready_client_with_backend(Box::new(TestBackend))
 }
 
 /// Create a [`CliprdrClient`] with a [`LockingBackend`], driven to Ready state.
-pub fn init_ready_locking_client() -> CliprdrClient {
+pub(super) fn init_ready_locking_client() -> CliprdrClient {
     init_ready_client_with_backend(Box::new(LockingBackend::new()))
 }
 
@@ -490,11 +424,7 @@ pub fn init_ready_locking_client() -> CliprdrClient {
 ///
 /// After this call, `cliprdr.request_file_contents(...)` will accept
 /// indices into the provided `files` list.
-///
-/// # Panics
-///
-/// Panics if encoding a PDU fails or the client rejects any step of the flow.
-pub fn set_remote_file_list(cliprdr: &mut CliprdrClient, files: Vec<FileDescriptor>) {
+pub(super) fn set_remote_file_list(cliprdr: &mut CliprdrClient, files: Vec<FileDescriptor>) {
     use ironrdp_cliprdr::pdu::{FormatList, PackedFileList};
 
     // 1. Remote sends FormatList with FileGroupDescriptorW

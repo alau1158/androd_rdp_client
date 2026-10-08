@@ -8,11 +8,12 @@
 #![allow(clippy::cast_sign_loss)]
 
 pub mod config;
+pub mod framebuffer;
 pub mod output_channel;
 pub mod rail;
 pub mod rdp;
 
-#[cfg(all(windows, feature = "clipboard"))]
+#[cfg(all(any(windows, target_os = "linux"), feature = "clipboard"))]
 mod clipboard;
 
 mod ws;

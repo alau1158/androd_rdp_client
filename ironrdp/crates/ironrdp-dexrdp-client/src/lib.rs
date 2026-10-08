@@ -40,7 +40,9 @@ ironrdp_client=debug,\
 ironrdp_rdpeudp=debug,\
 ironrdp_rdpeudp_tokio=debug,\
 ironrdp_rdpemt=debug,\
-ironrdp_session=warn,\
+ironrdp_dvc=debug,\
+ironrdp_session=debug,\
+ironrdp_egfx=debug,\
 ironrdp_graphics=warn,\
 ironrdp_echo=warn";
 
@@ -211,6 +213,11 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeConnect(
             .with_client_name("DeX RDP")
             .with_platform(MajorPlatformType::ANDROID)
             .with_pointer_software_rendering(true)
+            // Advertise RNS_UD_CS_SUPPORT_DYNVC_GFX_PROTOCOL so Windows opens the
+            // RDPGFX DVC. Without it the server keeps graphics on the legacy TCP
+            // path and there is no graphics channel for RDP multitransport
+            // Soft-Sync to move onto the UDP tunnel.
+            .with_graphics_pipeline(true)
             .with_timezone_info(local_timezone_info())
             .with_certificate_validation(CertificateValidation::DangerouslyAcceptInvalidCertificate);
 
@@ -227,7 +234,12 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeConnect(
         let vm = env.get_java_vm().map_err(|e| format!("java vm: {e}"))?;
 
         let (output_sender, mut output_receiver) = output_channel(64);
-        let client = RdpClient::new(config, output_sender);
+        // Deliver only the changed regions. The default full-`Image` mode repacks
+        // and colour-converts the entire 4K framebuffer on every update (an 8.3M
+        // pixel scan plus a fresh ~33 MB allocation per frame), which pins the
+        // phone's CPU and triggers constant GC. Dirty regions keep the per-update
+        // cost proportional to what actually changed.
+        let client = RdpClient::new(config, output_sender).with_desktop_updates();
         let input = client.input_sender();
 
         // Session thread: connect + run (includes the UDP sideband).
@@ -282,10 +294,38 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeConnect(
                             ],
                         );
                     }
+                    RdpOutputEvent::DesktopUpdate(update) => {
+                        let (pixels, width, height, region) = update.into_parts();
+                        let _ = write_frame_region(
+                            &mut env,
+                            &frame_buffer,
+                            &pixels,
+                            width.get(),
+                            height.get(),
+                            region.left,
+                            region.top,
+                            region.right,
+                            region.bottom,
+                        );
+                        let _ = env.call_method(
+                            callback_for_thread.as_obj(),
+                            "onFrame",
+                            "(Ljava/nio/ByteBuffer;II)V",
+                            &[
+                                JValue::Object(frame_buffer.as_obj()),
+                                JValue::Int(width.get() as i32),
+                                JValue::Int(height.get() as i32),
+                            ],
+                        );
+                    }
                     RdpOutputEvent::ConnectionFailure(err) => {
                         report_failure(&mut env, callback_for_thread.as_obj(), &format!("{err}"));
                     }
-                    RdpOutputEvent::Terminated(_) => {
+                    RdpOutputEvent::Terminated(result) => {
+                        match &result {
+                            Ok(reason) => tracing::warn!("session terminated gracefully: {reason:?}"),
+                            Err(error) => tracing::warn!("session terminated with error: {error}"),
+                        }
                         let _ = env.call_method(callback_for_thread.as_obj(), "onTerminated", "()V", &[]);
                         break;
                     }
@@ -328,15 +368,85 @@ fn write_frame(
     let count = pixels.len().min(expected).min(capacity / 4);
     let dst = unsafe { std::slice::from_raw_parts_mut(addr as *mut u32, count) };
     for (i, px) in pixels.iter().take(count).enumerate() {
-        // Source is 0x00RRGGBB. Android's ARGB_8888 bitmap stores pixels as
-        // RGBA in memory (little-endian), so emit [R, G, B, 0xFF], which is the
-        // u32 0xFF_BB_GG_RR: red and blue must be swapped relative to the source.
-        let r = (px >> 16) & 0xFF;
-        let g = (px >> 8) & 0xFF;
-        let b = px & 0xFF;
-        dst[i] = 0xFF00_0000 | (b << 16) | (g << 8) | r;
+        dst[i] = to_argb(px);
     }
     Ok(())
+}
+
+/// Blit one changed region into the Kotlin-owned framebuffer.
+///
+/// `pixels` is the tightly packed `0x00RRGGBB` region (row-major, `region_w *
+/// region_h` entries) delivered by [`RdpOutputEvent::DesktopUpdate`]. The region
+/// uses inclusive coordinates in the full framebuffer, so only those rows and
+/// columns are touched; the rest of the direct buffer keeps the pixels written by
+/// earlier updates. The caller still invokes `onFrame` with the full buffer, so
+/// the Kotlin side stays unchanged.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the region coordinates are plain scalars taken apart from the update"
+)]
+fn write_frame_region(
+    env: &mut JNIEnv,
+    frame_buffer: &GlobalRef,
+    pixels: &[u32],
+    fb_width: u16,
+    fb_height: u16,
+    left: u16,
+    top: u16,
+    right: u16,
+    bottom: u16,
+) -> Result<(), ()> {
+    if right < left || bottom < top {
+        return Err(());
+    }
+
+    let buf = unsafe { JByteBuffer::from_raw(frame_buffer.as_raw()) };
+    let capacity = env.get_direct_buffer_capacity(&buf).map_err(|_| ())?;
+    let addr = unsafe { env.get_direct_buffer_address(&buf) }.map_err(|_| ())?;
+    if addr.is_null() {
+        return Err(());
+    }
+
+    let fb_w = fb_width as usize;
+    let fb_h = fb_height as usize;
+    let left = left as usize;
+    let top = top as usize;
+    let region_w = (right as usize) + 1 - left;
+    let region_h = (bottom as usize) + 1 - top;
+
+    let cap_px = (capacity / 4).min(fb_w.saturating_mul(fb_h));
+    if region_w == 0 || region_h == 0 || left + region_w > fb_w || top + region_h > fb_h {
+        return Err(());
+    }
+
+    let dst = unsafe { std::slice::from_raw_parts_mut(addr as *mut u32, cap_px) };
+    let needed = region_w.saturating_mul(region_h);
+    if pixels.len() < needed {
+        return Err(());
+    }
+
+    for y in 0..region_h {
+        let dst_row = (top + y) * fb_w + left;
+        if dst_row + region_w > cap_px {
+            break;
+        }
+        let src_row = y * region_w;
+        for x in 0..region_w {
+            dst[dst_row + x] = to_argb(&pixels[src_row + x]);
+        }
+    }
+    Ok(())
+}
+
+/// Convert an IronRDP `0x00RRGGBB` pixel to the ARGB_8888 memory layout Android
+/// expects. Android stores RGBA in memory (little-endian), so emit
+/// `[R, G, B, 0xFF]`, the u32 `0xFF_BB_GG_RR`: red and blue are swapped.
+#[inline]
+fn to_argb(px: &u32) -> u32 {
+    let r = (px >> 16) & 0xFF;
+    let g = (px >> 8) & 0xFF;
+    let b = px & 0xFF;
+    0xFF00_0000 | (b << 16) | (g << 8) | r
 }
 
 #[unsafe(no_mangle)]

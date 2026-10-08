@@ -509,6 +509,8 @@ impl RpcApp {
 
                 window.request_redraw();
             }
+            // Only sent to a host that supplies a shared framebuffer, which this viewer does not.
+            RdpOutputEvent::FramebufferUpdated => {}
             RdpOutputEvent::ConnectionFailure(error) => {
                 error!(?error);
                 eprintln!("Connection error: {}", error.report().with_locations());
@@ -618,6 +620,12 @@ impl RpcApp {
             }
             RdpOutputEvent::RailControl(control) => {
                 debug!(?control, "RAIL control received");
+            }
+            RdpOutputEvent::Transport {
+                reliable_udp,
+                udp_version,
+            } => {
+                info!(reliable_udp, udp_version, "Session transport");
             }
             RdpOutputEvent::WindowingOrders(_) => {}
             // Only produced when the client is built with `.with_desktop_updates()`, which the
