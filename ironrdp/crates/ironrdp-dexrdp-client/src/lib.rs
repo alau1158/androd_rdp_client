@@ -213,11 +213,10 @@ pub extern "C" fn Java_com_dexrdp_engine_NativeRdp_nativeConnect(
             .with_client_name("DeX RDP")
             .with_platform(MajorPlatformType::ANDROID)
             .with_pointer_software_rendering(true)
-            // Advertise RNS_UD_CS_SUPPORT_DYNVC_GFX_PROTOCOL so Windows opens the
-            // RDPGFX DVC. Without it the server keeps graphics on the legacy TCP
-            // path and there is no graphics channel for RDP multitransport
-            // Soft-Sync to move onto the UDP tunnel.
-            .with_graphics_pipeline(true)
+            // EXPERIMENT (perf A/B): EGFX off forces the legacy fast-path
+            // bitmap pipeline, which HANDOFF notes is much lighter than
+            // RFX-progressive at 4K. Revert to `true` if this loses.
+            .with_graphics_pipeline(false)
             .with_timezone_info(local_timezone_info())
             .with_certificate_validation(CertificateValidation::DangerouslyAcceptInvalidCertificate);
 
