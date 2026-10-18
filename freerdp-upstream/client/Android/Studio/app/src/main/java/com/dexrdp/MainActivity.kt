@@ -3,16 +3,20 @@ package com.dexrdp
 import android.content.ClipData
 import android.app.AlertDialog
 import android.content.ClipboardManager
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import com.dexrdp.data.ConnectionProfile
 import com.dexrdp.data.ProfileStore
+import com.dexrdp.rdp.LocalNetworkAccess
 import com.dexrdp.rdp.SessionDiagnostics
 import com.dexrdp.rdp.SessionDiagnostics.ProbeResult
 import com.dexrdp.rdp.SessionLauncher
@@ -37,12 +41,29 @@ class MainActivity : ComponentActivity() {
     private var udpOffer by mutableStateOf("")
     private var udpEngine by mutableStateOf("")
 
+    private val localNetworkPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (!granted) {
+                Toast.makeText(
+                    this,
+                    "No local network permission: connections to LAN addresses fail silently. " +
+                        "Enable it in Settings \u2192 Apps \u2192 DeX RDP \u2192 Permissions.",
+                    Toast.LENGTH_LONG
+                ).show()
+                SessionDiagnostics.appendLine(
+                    this,
+                    "app: ACCESS_LOCAL_NETWORK denied \u2014 LAN connects will time out"
+                )
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         store = ProfileStore(this)
         SessionLauncher.applySessionDefaults(this)
         reloadProfiles()
+        requestLocalNetworkAccessIfNeeded()
 
         setContent {
             DexRdpTheme {
@@ -93,6 +114,18 @@ class MainActivity : ComponentActivity() {
         lastTarget = Diagnostics.getLastTarget(this)
         udpOffer = SessionDiagnostics.findMultitransportOffer(this)
         udpEngine = com.freerdp.freerdpcore.services.LibFreeRDP.getUdpEngineVersion()
+    }
+
+    private fun requestLocalNetworkAccessIfNeeded() {
+        if (!LocalNetworkAccess.shouldRequest(
+                android.os.Build.VERSION.SDK_INT,
+                granted = ContextCompat.checkSelfPermission(this, LocalNetworkAccess.PERMISSION) ==
+                    PackageManager.PERMISSION_GRANTED
+            )
+        ) {
+            return
+        }
+        localNetworkPermissionLauncher.launch(LocalNetworkAccess.PERMISSION)
     }
 
     private fun launchEngine(profile: ConnectionProfile) {
