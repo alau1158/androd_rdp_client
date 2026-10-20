@@ -34,6 +34,21 @@ class SessionFocusHighlightTest {
     }
 
     @Test
+    fun `session scroll container disables android's default focus highlight`() {
+        val layout = repoFile("../freeRDPCore/src/main/res/layout/session.xml")
+        val scrollView = Regex(
+            """<com\.freerdp\.freerdpcore\.presentation\.ScrollView2D\b[\s\S]*?>"""
+        ).find(layout)?.value
+
+        assertNotNull("session.xml must contain the ScrollView2D", scrollView)
+        assertTrue(
+            "ScrollView2D is full-screen, focusable and has no background; it must also " +
+                "set android:defaultFocusHighlightEnabled=\"false\"",
+            scrollView!!.contains("android:defaultFocusHighlightEnabled=\"false\"")
+        )
+    }
+
+    @Test
     fun `session view disables the highlight when constructed programmatically`() {
         val source = repoFile(
             "../freeRDPCore/src/main/java/com/freerdp/freerdpcore/presentation/SessionView.java"
