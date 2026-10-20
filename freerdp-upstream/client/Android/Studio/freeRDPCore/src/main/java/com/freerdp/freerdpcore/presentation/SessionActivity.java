@@ -58,6 +58,7 @@ import com.freerdp.freerdpcore.domain.ConnectionReference;
 import com.freerdp.freerdpcore.services.LibFreeRDP;
 import com.freerdp.freerdpcore.utils.ClipboardManagerProxy;
 import com.freerdp.freerdpcore.utils.Diagnostics;
+import com.freerdp.freerdpcore.utils.KeyboardCapture;
 
 public class SessionActivity extends AppCompatActivity
     implements LibFreeRDP.UIEventListener, ClipboardManagerProxy.OnClipboardChangedListener
@@ -323,6 +324,9 @@ public class SessionActivity extends AppCompatActivity
 		{
 			hideSystemBars();
 			mClipboardManager.getPrimaryClipManually();
+			// Re-assert shortcut capture once the window is actually focused; a
+			// pause from a previous instance can otherwise race the registration.
+			KeyboardCapture.setEnabled(this, true);
 		}
 	}
 
@@ -343,12 +347,16 @@ public class SessionActivity extends AppCompatActivity
 		super.onResume();
 		Log.v(TAG, "Session.onResume");
 		activeSession = this;
+		// Capture system shortcuts (notably the Windows/Super key) so they reach the
+		// remote session instead of opening the DeX app drawer.
+		KeyboardCapture.setEnabled(this, true);
 	}
 
 	@Override protected void onPause()
 	{
 		super.onPause();
 		Log.v(TAG, "Session.onPause");
+		KeyboardCapture.setEnabled(this, false);
 		if (activeSession == this)
 			activeSession = null;
 		// hide any visible keyboards

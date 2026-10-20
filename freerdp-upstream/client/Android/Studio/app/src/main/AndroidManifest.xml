@@ -10,6 +10,10 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Lets the session window capture system shortcuts (Windows/Super key, Alt+Tab,
+         ...) instead of letting the OS/DeX consume them. Normal install-time permission
+         on Android 16.1+. -->
+    <uses-permission android:name="android.permission.CAPTURE_KEYBOARD" />
 
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.keyboard" android:required="false" />

@@ -13,6 +13,7 @@ import android.widget.TextView
 import android.widget.Toast
 import com.freerdp.freerdpcore.presentation.ApplicationSettingsActivity
 import com.freerdp.freerdpcore.presentation.PhysicalKeyboardRouter
+import com.freerdp.freerdpcore.utils.KeyboardCapture
 import java.io.File
 import java.nio.ByteBuffer
 
@@ -153,6 +154,18 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback, PhysicalKeyboardRoute
     override fun onResume() {
         super.onResume()
         PhysicalKeyboardRouter.target = this
+        // Capture system shortcuts (notably the Windows/Super key) so they reach the
+        // remote session instead of opening the DeX app drawer.
+        KeyboardCapture.setEnabled(this, true)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            // Re-assert shortcut capture once the window is actually focused; a pause
+            // from a previous instance can otherwise race the registration.
+            KeyboardCapture.setEnabled(this, true)
+        }
     }
 
     /**
@@ -172,6 +185,7 @@ class RdpSessionActivity : Activity(), NativeRdp.Callback, PhysicalKeyboardRoute
 
     override fun onPause() {
         super.onPause()
+        KeyboardCapture.setEnabled(this, false)
         if (PhysicalKeyboardRouter.target === this) {
             PhysicalKeyboardRouter.target = null
         }

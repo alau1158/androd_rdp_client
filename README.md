@@ -9,7 +9,8 @@ desktop-class input and display: 4K output, full keyboard-shortcut passthrough
 
 - **4K display support**
 - **Full keyboard passthrough** — Super/Win key and extended scancodes reach the
-  remote PC via an accessibility-based physical-keyboard service
+  remote PC. The session window requests system-shortcut capture, with an
+  accessibility-based physical-keyboard service as a fallback
 - **Mouse input** — left/right/middle buttons, vertical and horizontal scroll,
   and back/forward (X1/X2) side buttons
 - **TCP and UDP transport** — FreeRDP for the standard TCP path; an IronRDP
@@ -72,9 +73,18 @@ ANDROID_NDK_HOME=/path/to/android-sdk/ndk/29.0.13113456 \
 
 ## Notes
 
+- **Keyboard capture on DeX.** Key filtering through an accessibility service does
+  not see key events on the DeX external display, so Samsung's window manager
+  consumed the Windows/Super key (opening the DeX app drawer) before the app could
+  forward it. The session window therefore asks the OS to capture system
+  shortcuts: `WindowManager.LayoutParams.setKeyboardCaptureEnabled(true)` with the
+  normal `android.permission.CAPTURE_KEYBOARD` permission on Android 16.1+, and the
+  hidden `SemWindowManager.requestMetaKeyEvent(component, true)` call on Samsung
+  devices. See `KeyboardCapture.java`.
 - The keyboard accessibility service is exported and labelled
   "DeX RDP Physical Keyboard". Sideloaded installs need **Allow restricted
-  settings** enabled to turn it on.
+  settings** enabled to turn it on. It remains useful on displays/versions where
+  the capture API is unavailable.
 - Security is negotiable (Auto by default); NLA is not forced.
 
 See [`HANDOFF.md`](HANDOFF.md) for the full project state, architecture, and
