@@ -100,6 +100,11 @@ public class SessionView extends View
 		// Ensure the view is focusable so the soft keyboard can attach to it (required for API 30+)
 		setFocusable(true);
 		setFocusableInTouchMode(true);
+		// The view fills the window and has no background, so Android would paint its
+		// translucent-white default focus highlight over the whole remote desktop as
+		// soon as a key press gives it keyboard focus ("white glaze"). The session
+		// surface already paints every pixel; the highlight must never be drawn.
+		setDefaultFocusHighlightEnabled(false);
 
 		invalidRegions = new Stack<>();
 		gestureDetector = new GestureDetector(context, new SessionGestureListener(), null, true);
