@@ -143,8 +143,6 @@ public class SessionActivity extends AppCompatActivity
 	private SessionInputManager inputManager;
 	private SessionDialogs dialogs;
 
-	private FloatingToolbar floatingToolbar;
-
 	void hideSystemBars()
 	{
 		boolean hideStatusBar = ApplicationSettingsActivity.getHideStatusBar(this);
@@ -267,19 +265,6 @@ public class SessionActivity extends AppCompatActivity
 		sessionView.requestFocus();
 
 		touchPointerView = findViewById(R.id.touchPointerView);
-
-		floatingToolbar = new FloatingToolbar(this, new FloatingToolbar.Listener() {
-			@Override public void onToggleTouchPointer()
-			{
-				if (inputManager != null)
-					inputManager.toggleTouchPointer();
-			}
-			@Override public void onToggleKeyboard()
-			{
-				if (inputManager != null)
-					inputManager.toggleKeyboard();
-			}
-		});
 
 		ExtendedKeyboardView keyboard = findViewById(R.id.extended_keyboard);
 
@@ -429,9 +414,6 @@ public class SessionActivity extends AppCompatActivity
 		Insets navInsets = hideNavBar
 		                       ? Insets.NONE
 		                       : windowInsets.getInsets(WindowInsetsCompat.Type.navigationBars());
-		if (floatingToolbar != null)
-			floatingToolbar.setInsets(navInsets.left, hideStatusBar ? 0 : insetsTop,
-			                          navInsets.right, navInsets.bottom);
 
 		int safeLeft = 0, safeTop = 0, safeRight = 0, safeBottom = 0;
 		if (fitSafeArea && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
