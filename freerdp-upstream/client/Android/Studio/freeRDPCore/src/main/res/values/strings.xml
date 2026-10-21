@@ -242,6 +242,10 @@
     <string name="error_bookmark_incomplete_title">Cancel without saving?</string>
     <string name="error_bookmark_incomplete">Press "Cancel" to abort!\nPress "Continue" to specify the required fields!</string>
     <string name="error_connection_failure">Could not establish a connection to the server!</string>
+    <string name="error_reason">Reason: %1$s</string>
+    <string name="error_session_ended">The remote session ended unexpectedly.</string>
+    <string name="dlg_title_connection_error">Connection failed</string>
+    <string name="dlg_title_session_ended">Session ended</string>
     <!-- Info message strings -->
     <string name="info_capabilities_changed">Screen settings changed to ones supported by the server instead.</string>
     <string name="info_reset_success">Certificate cache deleted.</string>

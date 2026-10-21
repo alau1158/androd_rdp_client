@@ -53,6 +53,8 @@
 #define DEX_S(x) ((x) ? (x) : "(null)")
 
 static UINT32 g_LastConnectError = 0;
+
+static const char* dexrdp_error_string(UINT32 code);
 static char g_DexLogPath[4096] = { 0 };
 
 /* Writes straight to disk with an explicit flush each time. FreeRDP's built in
@@ -740,6 +742,9 @@ static DWORD WINAPI android_thread_func(LPVOID param)
 		goto fail;
 	}
 
+	/* A new connection attempt must not inherit the previous session's error. */
+	g_LastConnectError = 0;
+
 	{
 		rdpSettings* s = instance->context->settings;
 
@@ -772,9 +777,12 @@ static DWORD WINAPI android_thread_func(LPVOID param)
 
 	if (!freerdp_connect(instance))
 	{
+		const char* errorText = NULL;
+
 		g_LastConnectError = freerdp_get_last_error(instance->context);
+		errorText = dexrdp_error_string(g_LastConnectError);
 		dexrdp_log("connect FAILED rdpError=%u (%s) winprError=%u", g_LastConnectError,
-		           freerdp_get_error_connect_string(g_LastConnectError), GetLastError());
+		           errorText ? errorText : "unknown", GetLastError());
 		status = GetLastError();
 	}
 	else
@@ -807,8 +815,11 @@ fail:
 		g_LastConnectError = freerdp_get_last_error(instance->context);
 
 		if (g_LastConnectError != 0)
+		{
+			const char* errorText = dexrdp_error_string(g_LastConnectError);
 			dexrdp_log("captured rdpError=%u (%s)", g_LastConnectError,
-			           freerdp_get_error_connect_string(g_LastConnectError));
+			           errorText ? errorText : "unknown");
+		}
 	}
 
 	dexrdp_log("session ended status=%08" PRIX32 " rdpError=%u", status, g_LastConnectError);
@@ -1420,6 +1431,63 @@ Java_com_freerdp_freerdpcore_services_LibFreeRDP_enableFileLogging(JNIEnv* env, 
 	return rc ? JNI_TRUE : JNI_FALSE;
 }
 
+/* Decodes a full FreeRDP error (class + type) into a display string.
+   Note: the freerdp_get_error_*_string() functions take the type only, so passing
+   the full MAKE_FREERDP_ERROR() value (e.g. 0x00020014) yields ERRCONNECT_UNKNOWN. */
+static const char* dexrdp_error_string(UINT32 code)
+{
+	const UINT32 cls = GET_FREERDP_ERROR_CLASS(code);
+	const UINT32 type = GET_FREERDP_ERROR_TYPE(code);
+	const char* info = NULL;
+
+	switch (cls)
+	{
+		case FREERDP_ERROR_CONNECT_CLASS:
+			info = freerdp_get_error_connect_string(type);
+			break;
+		case FREERDP_ERROR_ERRINFO_CLASS:
+			info = freerdp_get_error_info_string(type);
+			break;
+		case FREERDP_ERROR_ERRBASE_CLASS:
+			info = freerdp_get_error_base_string(type);
+			break;
+		default:
+			return NULL;
+	}
+
+	if (!info || !*info || (strcmp(info, "ERRCONNECT_UNKNOWN") == 0))
+		return NULL;
+
+	return info;
+}
+
+static const char* dexrdp_error_name(UINT32 code)
+{
+	const UINT32 cls = GET_FREERDP_ERROR_CLASS(code);
+	const UINT32 type = GET_FREERDP_ERROR_TYPE(code);
+	const char* name = NULL;
+
+	switch (cls)
+	{
+		case FREERDP_ERROR_CONNECT_CLASS:
+			name = freerdp_get_error_connect_name(type);
+			break;
+		case FREERDP_ERROR_ERRINFO_CLASS:
+			name = freerdp_get_error_info_name(type);
+			break;
+		case FREERDP_ERROR_ERRBASE_CLASS:
+			name = freerdp_get_error_base_name(type);
+			break;
+		default:
+			return NULL;
+	}
+
+	if (!name || !*name || (strcmp(name, "ERRCONNECT_UNKNOWN") == 0))
+		return NULL;
+
+	return name;
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_freerdp_freerdpcore_services_LibFreeRDP_getLastErrorString(JNIEnv* env, jclass cls,
                                                                     jlong inst)
@@ -1437,16 +1505,19 @@ Java_com_freerdp_freerdpcore_services_LibFreeRDP_getLastErrorString(JNIEnv* env,
 	if (code == 0)
 		return (*env)->NewStringUTF(env, "No error reported");
 
-	const char* name = freerdp_get_error_connect_name(code);
-	const char* info = freerdp_get_error_connect_string(code);
+	const char* info = dexrdp_error_string(code);
 
-	if (info && *info)
+	if (info)
 		return (*env)->NewStringUTF(env, info);
 
-	if (name && *name)
+	const char* name = dexrdp_error_name(code);
+
+	if (name)
 		return (*env)->NewStringUTF(env, name);
 
-	return (*env)->NewStringUTF(env, "Unknown error");
+	char unknown[64];
+	(void)snprintf(unknown, sizeof(unknown), "Unknown error (0x%08x)", (unsigned)code);
+	return (*env)->NewStringUTF(env, unknown);
 }
 
 static void* g_DexUdpLib = NULL;

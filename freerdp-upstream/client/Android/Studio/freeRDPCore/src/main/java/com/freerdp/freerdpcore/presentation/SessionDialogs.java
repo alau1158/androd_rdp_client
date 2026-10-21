@@ -265,6 +265,30 @@ public class SessionDialogs
 	}
 
 	/**
+	 * Shows a non-blocking error dialog. {@code onDismiss} runs once the user
+	 * acknowledges it, so the session screen can stay visible until then instead
+	 * of vanishing and looking like a crash.
+	 */
+	public void showConnectionError(String title, String message, final Runnable onDismiss)
+	{
+		mainHandler.post(() -> {
+			if (activity.isFinishing() || activity.isDestroyed())
+				return;
+
+			new AlertDialog.Builder(activity)
+			    .setTitle(title)
+			    .setMessage(message)
+			    .setPositiveButton(android.R.string.ok,
+			                       (dialog, which) -> {
+				                       if (onDismiss != null)
+					                       onDismiss.run();
+			                       })
+			    .setCancelable(false)
+			    .show();
+		});
+	}
+
+	/**
 	 * Builds and shows a non-blocking connect-progress dialog. Subsequent calls
 	 * replace any previously shown progress dialog.
 	 */

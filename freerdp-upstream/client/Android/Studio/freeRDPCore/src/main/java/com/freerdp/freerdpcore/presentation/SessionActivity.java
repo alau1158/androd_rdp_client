@@ -1035,7 +1035,8 @@ public class SessionActivity extends AppCompatActivity
 			}
 
 			String message = getResources().getString(R.string.error_connection_failure) +
-			                 (detail.isEmpty() ? "" : "\n\nReason: " + detail);
+			                 (detail.isEmpty() ? ""
+			                                   : "\n\n" + getString(R.string.error_reason, detail));
 
 			String target = "";
 
@@ -1045,7 +1046,12 @@ public class SessionActivity extends AppCompatActivity
 			}
 
 			Diagnostics.recordConnectFailure(this, target, detail);
-			uiHandler.sendMessage(Message.obtain(null, DISPLAY_TOAST, message));
+
+			// Keep the failure on screen until the user acknowledges it. Closing
+			// immediately made every refused connection look like an app crash.
+			dialogs.showConnectionError(getString(R.string.dlg_title_connection_error), message,
+			                            () -> closeSessionActivity(RESULT_CANCELED));
+			return;
 		}
 
 		closeSessionActivity(RESULT_CANCELED);
@@ -1068,7 +1074,22 @@ public class SessionActivity extends AppCompatActivity
 
 		railManager.clear();
 
+		boolean showNotice = !connectCancelledByUser && (session != null);
+
 		session.setUIEventListener(null);
+
+		if (showNotice)
+		{
+			String detail = LibFreeRDP.lastErrorString(session.getInstance());
+			String message = getString(R.string.error_session_ended) +
+			                 (detail.isEmpty() ? ""
+			                                   : "\n\n" + getString(R.string.error_reason, detail));
+
+			dialogs.showConnectionError(getString(R.string.dlg_title_session_ended), message,
+			                            () -> closeSessionActivity(RESULT_OK));
+			return;
+		}
+
 		closeSessionActivity(RESULT_OK);
 	}
 }
