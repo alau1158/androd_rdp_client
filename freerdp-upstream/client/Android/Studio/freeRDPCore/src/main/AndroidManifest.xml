@@ -77,6 +77,12 @@
             android:taskAffinity="com.freerdp.session"
             android:documentLaunchMode="always"
             android:autoRemoveFromRecents="true">
+            <!-- Delay the DeX translucent header/taskbar reveal when the pointer hits
+                 the top or bottom edge of a fullscreen window (milliseconds). Honoured
+                 by older DeX; ignored by One UI 9 (see HANDOFF.md). -->
+            <meta-data
+                android:name="com.samsung.android.dex.transient_bar_delay"
+                android:value="5000" />
             <!--android:configChanges="orientation|keyboardHidden|screenSize|keyboard"-->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

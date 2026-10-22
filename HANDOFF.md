@@ -204,6 +204,27 @@ beat the FreeRDP TCP engine for 4K.
   TCP** instead of hanging. (`UdpTransportConfig` default stays 130 s for
   interactive-cert callers.)
 
+## DeX chrome on One UI 9 (2026-10-21)
+
+The immersive fullscreen header (minimise / maximise / close) and the DeX
+taskbar are SystemUI overlay windows, not app window insets. On One UI 9 /
+Android 17:
+
+- `com.samsung.android.dex.transient_bar_delay` (declared on both session
+  activities) is ignored. SystemUI hardcodes the immersive header reveal at
+  500 ms in `DesktopImmersiveCaptionAnimator`.
+- The legacy `com.sec.android.desktopmode.uiservice.SettingsProvider` is gone,
+  so Good Lock/MultiStar’s “Set taskbar and header bar display delay time” no
+  longer works either.
+- The session now reserves the navigation-bar inset whenever it is actually
+  visible (`WindowInsetsCompat.isVisible`), rather than trusting the “Hide
+  navigation bar” setting. This avoids drawing under a pinned taskbar, but DeX
+  does not report its taskbar as an app inset, so the app cannot reserve that
+  strip automatically.
+- There is no app-side way to delay or disable the overlay while keeping the 4K
+  viewport full-size. Remaining options: lock-task/pin (untested) or
+  pointer-capture / relative mouse so the cursor never reaches the screen edge.
+
 ## Handy references (used to root-cause the Windows interop)
 
 - `zhongbai2333/NativeMacRDP` — a macOS RDP **server** that interoperates with real
@@ -237,7 +258,7 @@ Rust 1.94.1 (pinned by `ironrdp/rust-toolchain.toml`) + `cargo-ndk`.
 
 Version lives in `freerdp-upstream/client/Android/Studio/release.properties`
 (`VERSION_NAME` / `VERSION_CODE`). Bump both before building a release APK —
-the filename version alone does not change what the phone sees. Latest: 1.0.48.
+the filename version alone does not change what the phone sees. Latest: 1.0.72.
 
 ## Engine JNI surface (com.dexrdp.engine.NativeRdp)
 

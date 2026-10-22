@@ -411,9 +411,14 @@ public class SessionActivity extends AppCompatActivity
 		                               WindowInsetsCompat.Type.displayCutout())
 		                    .top;
 		rootView.setPadding(0, hideStatusBar ? 0 : insetsTop, 0, 0);
-		Insets navInsets = hideNavBar
-		                       ? Insets.NONE
-		                       : windowInsets.getInsets(WindowInsetsCompat.Type.navigationBars());
+		// Reserve the bar whenever it is actually on screen. In DeX's maximised
+		// (non-immersive) mode the taskbar stays visible even though the app asked
+		// for hidden bars, and the remote Windows taskbar would otherwise sit
+		// underneath it. When the bars really are hidden this inset is empty.
+		boolean navBarVisible = windowInsets.isVisible(WindowInsetsCompat.Type.navigationBars());
+		Insets navInsets = navBarVisible
+		                       ? windowInsets.getInsets(WindowInsetsCompat.Type.navigationBars())
+		                       : Insets.NONE;
 
 		int safeLeft = 0, safeTop = 0, safeRight = 0, safeBottom = 0;
 		if (fitSafeArea && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)

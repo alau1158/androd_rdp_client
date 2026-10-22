@@ -63,7 +63,12 @@
             android:theme="@style/Theme.DexRdp"
             android:enableOnBackInvokedCallback="false"
             android:configChanges="orientation|keyboard|keyboardHidden|screenSize|smallestScreenSize|density|screenLayout|navigation"
-            android:windowSoftInputMode="adjustResize" />
+            android:windowSoftInputMode="adjustResize">
+            <!-- Same DeX delay as the FreeRDP session activity (no effect on One UI 9). -->
+            <meta-data
+                android:name="com.samsung.android.dex.transient_bar_delay"
+                android:value="5000" />
+        </activity>
 
         <service
             android:name="com.freerdp.freerdpcore.presentation.KeyboardAccessibilityService"
